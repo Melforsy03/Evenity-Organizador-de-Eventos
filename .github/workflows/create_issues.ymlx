@@ -1,0 +1,36 @@
+name: Crear Issues Iniciales Automáticamente
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  create_issues:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Crear Issues Predefinidos
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          issues='[
+            {"title": "Semana 1: Definición del alcance y arquitectura", "body": "Definir el alcance del proyecto, arquitectura y distribución de tareas."},
+            {"title": "Semana 2: Implementación del crawler y extracción de datos", "body": "Desarrollar el módulo crawler.py para extracción de eventos y validación."},
+            {"title": "Semana 3: Normalización y procesamiento de eventos", "body": "Construcción del módulo procesamiento.py para estandarizar eventos."},
+            {"title": "Semana 4: Generación de embeddings y búsqueda semántica", "body": "Desarrollar embedding.py para vectorización y búsqueda eficiente."},
+            {"title": "Semana 5: Construcción y uso del grafo de conocimiento", "body": "Implementar grafo para relaciones y recomendaciones avanzadas."},
+            {"title": "Semana 6: Interfaz de usuario con Streamlit", "body": "Desarrollar visual.py para UI interactiva con filtros y agendas."},
+            {"title": "Semana 7: Optimización y mejoras finales", "body": "Refinar motor de recomendaciones, gestión de sesiones y documentación."},
+            {"title": "Semana 8: Preparación para entrega y presentación", "body": "Redacción del README, reporte y preparación de la presentación final."}
+          ]'
+
+          for issue in $(echo $issues | jq -c '.[]'); do
+            title=$(echo $issue | jq -r '.title')
+            body=$(echo $issue | jq -r '.body')
+            curl -X POST \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/${{ github.repository }}/issues \
+              -d "{\"title\":\"$title\",\"body\":\"$body\"}"
+          done
+
