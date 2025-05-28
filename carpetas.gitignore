@@ -1,0 +1,22 @@
+src/modules/eventos_completos/
+src/modules/eventos_mejorados/
+# Ignorar carpetas de datos y logs
+data/
+logs/
+temp/
+__pycache__/
+*.pyc
+
+# Ignorar entorno virtual
+venv/
+env/
+.venv/
+.env/
+
+# Ignorar configuraciones y archivos de sistema
+*.log
+*.sqlite3
+.DS_Store
+.idea/
+.vscode/
+*.swp

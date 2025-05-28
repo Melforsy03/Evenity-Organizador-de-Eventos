@@ -1,0 +1,8 @@
+streamlit
+faiss-cpu
+sentence-transformers
+networkx
+numpy
+pandas
+python-dateutil
+requests
