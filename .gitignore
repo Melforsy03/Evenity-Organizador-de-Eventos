@@ -1,5 +1,5 @@
-src/modules/eventos_completos/
-src/modules/eventos_mejorados/
+eventos_completos/
+eventos_mejorados/
 
 data/
 logs/

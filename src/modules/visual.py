@@ -5,6 +5,7 @@ from optimizador import obtener_eventos_optimales
 from transformers import pipeline
 from datetime import datetime
 from grafo_conocimiento import enriquecer_resultados_con_razonamiento_avanzado
+import numpy as np
 
 # --- Carga y cacheo de modelos ---
 @st.cache_resource
@@ -92,9 +93,33 @@ def realizar_busqueda():
             st.session_state.total_pages = max(1, (len(st.session_state.resultados) - 1) // st.session_state.select_k + 1)
 
             if not resultados:
-                st.warning("No encontramos eventos con esos criterios. Intenta modificar tu búsqueda o filtros.")
-            else:
-                st.success(f"Encontramos {len(resultados)} eventos relevantes")
+                st.warning("No encontramos eventos locales con esos criterios. Intentando buscar en línea...")
+
+                from embedding import fallback_api_call  # asegúrate de que esté disponible
+                query = st.session_state.last_query
+                start = filtros.get("fecha_inicio")
+                end = filtros.get("fecha_fin")
+
+                nuevos_eventos = fallback_api_call(query, start, end)
+                
+                if nuevos_eventos:
+                    st.success(f"🎉 Hemos encontrado {len(nuevos_eventos)} eventos relevantes en línea.")
+                    
+                    # Agregar temporalmente los nuevos eventos al embedder
+                    st.session_state.embedder.events.extend(nuevos_eventos)
+                    nuevos_embeddings = st.session_state.embedder.model.encode(
+                        [st.session_state.embedder.build_event_text(ev) for ev in nuevos_eventos],
+                        convert_to_numpy=True
+                    )
+                    st.session_state.embedder.embeddings = np.vstack([st.session_state.embedder.embeddings, nuevos_embeddings])
+                    st.session_state.embedder.build_index(st.session_state.embedder.embeddings)
+
+                    resultados = nuevos_eventos
+                    st.session_state.resultados = nuevos_eventos
+                    st.session_state.total_pages = max(1, (len(nuevos_eventos) - 1) // st.session_state.select_k + 1)
+                    st.session_state.page = 0
+                else:
+                    st.error("No encontramos eventos, ni siquiera con búsqueda externa. ¿Quieres ampliar las fechas o cambiar de ciudad?")
 
         except Exception as e:
             st.error(f"Error en la búsqueda: {str(e)}")

@@ -2,6 +2,7 @@ import os
 import json
 import networkx as nx
 from embedding import load_events_from_folder
+from typing import List, Dict, Any
 
 def construir_grafo_conocimiento(folder_path="eventos_mejorados"):
     eventos = load_events_from_folder(folder_path)
@@ -125,3 +126,29 @@ def generar_y_exportar_grafo_avanzado(input_folder="eventos_mejorados", output_p
     for ev, score in eventos_ordenados[:5]:
         resumen += f" - {ev}: {score:.5f}\n"
     return resumen
+
+
+
+def enriquecer_resultados_por_similitud(eventos: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Mejora la relevancia si los eventos comparten artistas o categorías"""
+    eventos_enriquecidos = []
+    for ev in eventos:
+        score = 0
+        artistas = {p.get("name") for p in ev.get("participants", {}).get("performers", []) if p.get("name")}
+        categoria = ev.get("classification", {}).get("primary_category")
+
+        for otro in eventos:
+            if otro == ev:
+                continue
+            otros_artistas = {p.get("name") for p in otro.get("participants", {}).get("performers", []) if p.get("name")}
+            otra_cat = otro.get("classification", {}).get("primary_category")
+
+            if artistas & otros_artistas:
+                score += 2
+            if categoria and categoria == otra_cat:
+                score += 1
+
+        eventos_enriquecidos.append((ev, score))
+
+    eventos_enriquecidos.sort(key=lambda x: x[1], reverse=True)
+    return [ev for ev, _ in eventos_enriquecidos]

@@ -12,6 +12,7 @@ import pytz
 from geopy.distance import geodesic
 from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict
+import os
 def make_timezone_aware(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=tz.UTC)
@@ -346,21 +347,49 @@ class EventEmbedder:
             return "⚠️ Recomendado por proximidad semántica general."
         return " · ".join(explicacion)
 
-import os
 
+from crawler import EventScraper
+from procesamiento import EventProcessor
 def run_embedding():
-    # Obtener la carpeta donde está este script que contiene run_embedding
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    folder_path = os.path.join(current_dir, "eventos_mejorados")  # ruta absoluta a la carpeta
+        # Obtener la carpeta donde está este script que contiene run_embedding
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        folder_path = os.path.join(current_dir, "../../eventos_mejorados")  # ruta absoluta a la carpeta
 
-    eventos_normalizados = load_events_from_folder(folder_path)
+        eventos_normalizados = load_events_from_folder(folder_path)
 
-    if not eventos_normalizados:
-        print("No se encontraron eventos para procesar.")
-        return
+        if not eventos_normalizados:
+            print("No se encontraron eventos para procesar.")
+            return
 
-    embedder = EventEmbedder()
-    embeddings = embedder.generate_embeddings(eventos_normalizados)
-    embedder.build_index(embeddings, index_type="IVFFlat")
-    embedder.save(output_dir="embedding_data")
-    print("Proceso completado: índice creado y guardado.")
+        embedder = EventEmbedder()
+        embeddings = embedder.generate_embeddings(eventos_normalizados)
+        embedder.build_index(embeddings, index_type="IVFFlat")
+        embedder.save(output_dir="embedding_data")
+        print("Proceso completado: índice creado y guardado.")
+
+def fallback_api_call(query: str, start_date: str = None, end_date: str = None, source="seatgeek"):
+    scraper = EventScraper()
+    processor = EventProcessor()
+    nuevos_eventos = []
+
+    if source == "seatgeek":
+        url = "https://api.seatgeek.com/2/events"
+        params = {
+            "client_id": scraper.sources_config["seatgeek"]["client_id"],
+            "q": query,
+            "per_page": 10
+        }
+        if start_date:
+            params["datetime_local.gte"] = start_date
+        if end_date:
+            params["datetime_local.lte"] = end_date
+
+        response = scraper._make_request(url, params=params)
+        if response:
+            data = response.json()
+            for e in data.get("events", []):
+                ev = processor.process_event(e, "seatgeek")
+                if "error" not in ev:
+                    nuevos_eventos.append(ev)
+
+    return nuevos_eventos
