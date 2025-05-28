@@ -1,12 +1,21 @@
 import streamlit as st
+import os
 from embedding import EventEmbedder
 from grafo_conocimiento import get_knowledge_graph
 from optimizador import obtener_eventos_optimales
-from transformers import pipeline
 from datetime import datetime
 from grafo_conocimiento import enriquecer_resultados_con_razonamiento_avanzado
 import numpy as np
+from tqdm import tqdm
+import logging
+from functools import partialmethod
 
+# Configuración de logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Deshabilitar tqdm para evitar conflictos con Streamlit
+tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
 # --- Carga y cacheo de modelos ---
 @st.cache_resource
 def cargar_modelos():

@@ -9,9 +9,10 @@ from urllib.parse import urljoin
 import sys
 import io
 
-# Configurar encoding UTF-8 para la consola de Windows
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-
+try:
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+except Exception:
+    pass  # Ignorar si falla (por ejemplo en Streamlit)
 # Configuración básica de logging
 logging.basicConfig(
     level=logging.INFO,

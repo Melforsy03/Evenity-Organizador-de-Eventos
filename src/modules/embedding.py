@@ -57,7 +57,7 @@ class EventEmbedder:
 
         for key, grupo_eventos in grupos.items():
             textos = [self.build_event_text(ev) for ev in grupo_eventos]
-            vecs = self.model.encode(textos, convert_to_numpy=True)
+            vecs = self.model.encode(textos, convert_to_numpy=True , disable=True , file=None)
             vecs = vecs / norm(vecs, axis=1, keepdims=True)
 
             index = faiss.IndexFlatIP(vecs.shape[1])
@@ -142,9 +142,8 @@ class EventEmbedder:
             index_temp.add(embeddings_candidatos)
 
             # Vectorizar consulta
-            query_vec = self.model.encode([query], convert_to_numpy=True)
+            query_vec = self.model.encode([query], convert_to_numpy=True, disable=True , file=None)
             query_vec = query_vec / np.linalg.norm(query_vec)
-
             distances, indices = index_temp.search(query_vec, k)
 
             resultados = [candidatos[i] for i in indices[0] if i < len(candidatos)]
@@ -155,7 +154,7 @@ class EventEmbedder:
     def generate_embeddings(self, events):
             self.events = events
             texts = [self.build_event_text(e) for e in events]
-            self.embeddings = self.model.encode(texts, convert_to_numpy=True, show_progress_bar=True)
+            self.embeddings = self.model.encode(texts, convert_to_numpy=True, disable=True ,file=None)
             return self.embeddings
     
     def build_index(self, embeddings: np.ndarray, index_type: str = "IVFFlat"):
@@ -203,7 +202,7 @@ class EventEmbedder:
                 return [], []
 
             index, eventos = self.shards[shard_key]
-            q_vec = self.model.encode([query], convert_to_numpy=True)
+            q_vec = self.model.encode([query], convert_to_numpy=True , disable=True ,file=None)
             q_vec /= np.linalg.norm(q_vec)
 
             D, I = index.search(q_vec, k)
