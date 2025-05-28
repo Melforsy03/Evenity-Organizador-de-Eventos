@@ -38,3 +38,4 @@ def pipeline_completo():
 
 if __name__ == "__main__":
     pipeline_completo()
+    
