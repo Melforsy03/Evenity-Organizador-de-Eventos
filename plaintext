@@ -1,0 +1,25 @@
+[Agente Scraper]
+      |
+      V
+ [raw_events queue / folder]
+      |
+[Agente Procesador]
+      |
+      V
+[processed_events queue / folder]
+      |                \
+      V                 \  
+[Agente Actualizador]    [Agente Embedding]----\
+      |                  |                     \
+      V                  V                      \
+[processed_events]    [embedding index]        [Agente Grafo]
+                                            /       |
+                                           /        V
+                                    [knowledge graph]  [Agente Optimizador]
+                                           \             /
+                                            \           /
+                                             \         /
+                                             [Agente UI/Interfaz]
+                                                   |
+                                                   V
+                                              Usuario final
