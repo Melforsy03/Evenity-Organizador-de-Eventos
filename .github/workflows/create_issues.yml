@@ -1,4 +1,4 @@
-name: Crear Issues Iniciales Automáticamente
+name: Issues Iniciales Automáticamente
 
 on:
   push:
