@@ -4,14 +4,15 @@ import pickle
 import numpy as np
 from datetime import datetime
 import os
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any
 import logging
 import json
 from dateutil import tz
-import pytz
 from geopy.distance import geodesic
 from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict
+from crawler import EventScraper
+from procesamiento import EventProcessor
 import os
 def make_timezone_aware(dt: datetime) -> datetime:
     if dt.tzinfo is None:
@@ -173,28 +174,53 @@ class EventEmbedder:
             self.index.add(embeddings)
             print(f"Índice FAISS creado con {self.index.ntotal} embeddings")
     def save(self, output_dir: str = "embedding_data"):
-            os.makedirs(output_dir, exist_ok=True)
-            faiss.write_index(self.index, os.path.join(output_dir, "eventos.index"))
-            with open(os.path.join(output_dir, "eventos_metadata.pkl"), "wb") as f:
-                pickle.dump({
-                    "events": self.events,
-                }, f)
-            np.save(os.path.join(output_dir, "eventos_embeddings.npy"), self.embeddings)
-            print(f"Datos guardados en {output_dir}")
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        output_dir = os.path.abspath(os.path.join(base_dir, "..", "..", output_dir))
+
+        os.makedirs(output_dir, exist_ok=True)
+        faiss.write_index(self.index, os.path.join(output_dir, "eventos.index"))
+
+        with open(os.path.join(output_dir, "eventos_metadata.pkl"), "wb") as f:
+            pickle.dump({"events": self.events}, f)
+
+        np.save(os.path.join(output_dir, "eventos_embeddings.npy"), self.embeddings)
+
+        print(f"✅ Datos guardados en {output_dir}")
+
 
     @classmethod
     def load(cls, input_dir: str = "embedding_data"):
+        # Obtiene el directorio del archivo actual (embedding.py)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+    
+        # Construye la ruta correcta relativa a la ubicación del proyecto
+        project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
+
+        path_index = os.path.join(project_root, "embedding_data\eventos.index")
+        path_metadata = os.path.join(project_root, "embedding_data\eventos_metadata.pkl")
+        path_embeddings = os.path.join(project_root, "embedding_data\eventos_embeddings.npy")
+
+        if not os.path.exists(path_index):
+            raise FileNotFoundError(f"❌ No se encontró: {path_index}")
+        if not os.path.exists(path_metadata):
+            raise FileNotFoundError(f"❌ No se encontró: {path_metadata}")
+        if not os.path.exists(path_embeddings):
+            raise FileNotFoundError(f"❌ No se encontró: {path_embeddings}")
+
         embedder = cls()
-        embedder.index = faiss.read_index(os.path.join(input_dir, "eventos.index"))
-        with open(os.path.join(input_dir, "eventos_metadata.pkl"), "rb") as f:
+        embedder.index = faiss.read_index(path_index)
+
+        with open(path_metadata, "rb") as f:
             data = pickle.load(f)
             embedder.events = data["events"]
-        embedder.embeddings = np.load(os.path.join(input_dir, "eventos_embeddings.npy"))
-        
-        # ✅ Construir shards por ciudad
-        embedder.build_shards(embedder.events, shard_key_func=lambda ev: ev.get("spatial_info", {}).get("area", {}).get("city", "desconocido"))
-        
-        print(f"Cargados {len(embedder.events)} eventos y embeddings")
+
+        embedder.embeddings = np.load(path_embeddings)
+        embedder.build_shards(
+            embedder.events,
+            shard_key_func=lambda ev: ev.get("spatial_info", {}).get("area", {}).get("city", "desconocido")
+        )
+
+        print(f"✅ Cargados {len(embedder.events)} eventos desde {input_dir}")
         return embedder
 
     def search(self, query, shard_key, k=5):
@@ -346,9 +372,6 @@ class EventEmbedder:
             return "⚠️ Recomendado por proximidad semántica general."
         return " · ".join(explicacion)
 
-
-from crawler import EventScraper
-from procesamiento import EventProcessor
 def run_embedding():
         # Obtener la carpeta donde está este script que contiene run_embedding
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -388,6 +411,51 @@ def fallback_api_call(query: str, start_date: str = None, end_date: str = None, 
             data = response.json()
             for e in data.get("events", []):
                 ev = processor.process_event(e, "seatgeek")
+                if "error" not in ev:
+                    nuevos_eventos.append(ev)
+
+    elif source == "predicthq":
+        url = f"{scraper.sources_config['predicthq']['base_url']}/events/"
+        headers = {
+            "Authorization": f"Bearer {scraper.sources_config['predicthq']['api_key']}",
+            "Accept": "application/json"
+        }
+        params = {
+            "q": query,
+            "limit": 10,
+            "country": "ES"
+        }
+        if start_date:
+            params["active.gte"] = start_date
+        if end_date:
+            params["active.lte"] = end_date
+
+        response = scraper._make_request(url, params=params, headers=headers)
+        if response:
+            data = response.json()
+            for e in data.get("results", []):
+                ev = processor.process_event(e, "predicthq")
+                if "error" not in ev:
+                    nuevos_eventos.append(ev)
+
+    elif source == "ticketmaster":
+        url = f"{scraper.sources_config['ticketmaster']['base_url']}/events.json"
+        params = {
+            "apikey": scraper.sources_config["ticketmaster"]["api_key"],
+            "keyword": query,
+            "countryCode": "ES",
+            "size": 10
+        }
+        if start_date:
+            params["startDateTime"] = start_date + "T00:00:00Z"
+        if end_date:
+            params["endDateTime"] = end_date + "T23:59:59Z"
+
+        response = scraper._make_request(url, params=params)
+        if response:
+            data = response.json()
+            for e in data.get("_embedded", {}).get("events", []):
+                ev = processor.process_event(e, "ticketmaster")
                 if "error" not in ev:
                     nuevos_eventos.append(ev)
 

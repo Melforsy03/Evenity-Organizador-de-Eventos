@@ -1,25 +1,14 @@
-[Agente Scraper]
-      |
-      V
- [raw_events queue / folder]
-      |
-[Agente Procesador]
-      |
-      V
-[processed_events queue / folder]
-      |                \
-      V                 \  
-[Agente Actualizador]    [Agente Embedding]----\
-      |                  |                     \
-      V                  V                      \
-[processed_events]    [embedding index]        [Agente Grafo]
-                                            /       |
-                                           /        V
-                                    [knowledge graph]  [Agente Optimizador]
-                                           \             /
-                                            \           /
-                                             \         /
-                                             [Agente UI/Interfaz]
-                                                   |
-                                                   V
-                                              Usuario final
+[Sistema multiagente iniciado]
+            ↓
+[Scraper] → [Procesador] → [Actualizador (si necesario)]
+            ↓                      ↓
+          [Embeddings]       [Grafo de conocimiento]
+            ↓                      ↓
+       [Visualización] ← [Optimizador]
+            ↑
+[GapFallback] ← (verifica brechas, actualiza eventos)
+            ↑
+[Busqueda interactiva] ← (filtra, razona y responde)
+
++ Ciclo se repite automáticamente cada 7 días.
+

@@ -4,56 +4,114 @@ import networkx as nx
 from embedding import load_events_from_folder
 from typing import List, Dict, Any
 
-def construir_grafo_conocimiento(folder_path="eventos_mejorados"):
-    eventos = load_events_from_folder(folder_path)
+import networkx as nx
+import numpy as np
+from embedding import EventEmbedder
+
+def construir_grafo_conocimiento():
+    embedder = EventEmbedder.load("../../embedding_data")
+    eventos = embedder.events
     G = nx.MultiDiGraph()
 
-    for evento in eventos:
-        eid = evento.get("metadata", {}).get("original_id", evento.get("basic_info", {}).get("title", "evento_desconocido"))
-        enombre = evento.get("basic_info", {}).get("title", "Evento sin título")
-        ciudad = evento.get("spatial_info", {}).get("area", {}).get("city", "Ciudad desconocida")
-        categoria = evento.get("classification", {}).get("primary_category", "Sin categoría")
-        performers = evento.get("participants", {}).get("performers", [])
+    for ev in eventos:
+        ev_id = ev.get("id") or ev.get("basic_info", {}).get("title", "unknown_event")
+        G.add_node(ev_id, tipo="evento", data=ev)
 
-        # Nodo del evento
-        G.add_node(enombre, tipo="evento")
+        info = ev.get("basic_info", {})
+        cat = ev.get("classification", {})
+        spa = ev.get("spatial_info", {})
+        tmp = ev.get("temporal_info", {})
 
-        # Nodo de ciudad
-        G.add_node(ciudad, tipo="ciudad")
-        G.add_edge(enombre, ciudad, tipo="ocurre_en")
+        ciudad = spa.get("area", {}).get("city")
+        if ciudad:
+            G.add_node(ciudad, tipo="ciudad")
+            G.add_edge(ev_id, ciudad, tipo="ocurre_en")
 
-        # Nodo de categoría
-        G.add_node(categoria, tipo="categoría")
-        G.add_edge(enombre, categoria, tipo="es_de_tipo")
-
-        # Nodo de país
-        pais = evento.get("spatial_info", {}).get("area", {}).get("country")
+        pais = spa.get("area", {}).get("country")
         if pais:
             G.add_node(pais, tipo="pais")
-            G.add_edge(ciudad, pais, tipo="ubicado_en")
+            G.add_edge(ev_id, pais, tipo="ocurre_en")
 
-        # Nodo de organizadores
-        organizadores = evento.get("participants", {}).get("organizers", [])
-        for org in organizadores:
-            nombre_org = org.get("name", "Organizador desconocido")
-            G.add_node(nombre_org, tipo="organizador")
-            G.add_edge(nombre_org, enombre, tipo="organiza")
+        categoria = cat.get("primary_category")
+        if categoria:
+            G.add_node(categoria, tipo="categoría")
+            G.add_edge(ev_id, categoria, tipo="es_de_categoria")
 
-        # Nodo por cada performer
-        for p in performers:
-            nombre_p = p.get("name", "Artista desconocido")
-            G.add_node(nombre_p, tipo="artista")
-            G.add_edge(nombre_p, enombre, tipo="actúa_en")
+        artista = info.get("artist")
+        if artista:
+            G.add_node(artista, tipo="artista")
+            G.add_edge(ev_id, artista, tipo="tiene_artista")
 
-    print(f"[✔] Grafo generado con {len(G.nodes)} nodos y {len(G.edges)} relaciones.")
+        organizador = info.get("organizer")
+        if organizador:
+            G.add_node(organizador, tipo="organizador")
+            G.add_edge(ev_id, organizador, tipo="organizado_por")
+
+        venue = spa.get("venue", {}).get("name")
+        if venue:
+            G.add_node(venue, tipo="venue")
+            G.add_edge(ev_id, venue, tipo="ocurre_en_venue")
+
+        fecha = tmp.get("start")
+        if fecha:
+            G.add_node(fecha, tipo="fecha")
+            G.add_edge(ev_id, fecha, tipo="ocurre_en_fecha")
+
+    # Relaciones de similitud entre eventos
+    textos = [embedder.build_event_text(ev) for ev in eventos]
+    embeddings = embedder.model.encode(textos, convert_to_numpy=True, normalize_embeddings=True)
+    umbral_sim = 0.88
+
+    for i in range(len(eventos)):
+        for j in range(i + 1, len(eventos)):
+            sim = np.dot(embeddings[i], embeddings[j])
+            if sim > umbral_sim:
+                id1 = eventos[i].get("id") or eventos[i].get("basic_info", {}).get("title", f"ev_{i}")
+                id2 = eventos[j].get("id") or eventos[j].get("basic_info", {}).get("title", f"ev_{j}")
+                G.add_edge(id1, id2, tipo="similar_a", peso=sim)
+
     return G
+
+def enriquecer_resultados_con_razonamiento_avanzado(eventos, grafo, consulta, k=10):
+    consulta = consulta.lower()
+    resultados_con_score = []
+
+    pagerank = nx.pagerank(grafo) if len(grafo.nodes) > 0 else {}
+
+    for ev in eventos:
+        ev_id = ev.get("id") or ev.get("basic_info", {}).get("title", "unknown_event")
+        score = 1.0
+
+        if grafo.has_node(ev_id):
+            for vecino in grafo.neighbors(ev_id):
+                edge_data = grafo.get_edge_data(ev_id, vecino)
+                if not edge_data:
+                    continue
+
+                for _, attrs in edge_data.items():
+                    tipo = attrs.get("tipo")
+                    if tipo == "similar_a":
+                        score += attrs.get("peso", 0.1)
+                    elif tipo in ["ocurre_en", "ocurre_en_venue", "ocurre_en_fecha"] and consulta in vecino.lower():
+                        score += 0.25
+                    elif tipo in ["es_de_categoria", "tiene_artista", "organizado_por"] and consulta in vecino.lower():
+                        score += 0.2
+
+        # Bonus por centralidad
+        score += pagerank.get(ev_id, 0)
+
+        resultados_con_score.append((ev, score))
+
+    resultados_con_score.sort(key=lambda x: x[1], reverse=True)
+    return resultados_con_score[:k]
+
 
 def exportar_grafo(G, output_path="grafo_eventos.graphml"):
     nx.write_graphml(G, output_path)
     print(f"[📦] Grafo exportado a {output_path}")
 
-def get_knowledge_graph(folder_path="eventos_mejorados") -> nx.MultiDiGraph:
-    return construir_grafo_conocimiento(folder_path)
+def get_knowledge_graph() -> nx.MultiDiGraph:
+    return construir_grafo_conocimiento()
 
 # ======================== NUEVAS FUNCIONES DE RAZONAMIENTO AVANZADO ========================
 
@@ -84,34 +142,6 @@ def distancia_entre_nodos(G: nx.Graph, nodo_origen: str, nodo_destino: str) -> i
     except nx.NetworkXNoPath:
         return None
 
-def enriquecer_resultados_con_razonamiento_avanzado(eventos: list, G: nx.Graph, query: str, k=10):
-    pr = calcular_pagerank(G)
-    palabras_clave = query.lower().split()
-    nodos_relacionados = [n for n in G.nodes if any(pk in n.lower() for pk in palabras_clave)]
-
-    eventos_con_score = []
-    for ev in eventos:
-        nombre_evento = ev.get("basic_info", {}).get("title", "")
-        if nombre_evento not in G:
-            score_pr = 0
-            score_prox = 100
-        else:
-            score_pr = pr.get(nombre_evento, 0)
-            distancias = []
-            for nodo_rel in nodos_relacionados:
-                d = distancia_entre_nodos(G, nombre_evento, nodo_rel)
-                if d is not None:
-                    distancias.append(d)
-            score_prox = min(distancias) if distancias else 100
-
-        score_combinado = score_pr - 0.1 * score_prox
-        if any(pk in nombre_evento.lower() for pk in palabras_clave):
-            score_combinado += 0.2
-
-        eventos_con_score.append((ev, score_combinado))
-
-    eventos_con_score.sort(key=lambda x: x[1], reverse=True)
-    return eventos_con_score[:k]  # Aquí retornamos lista de (evento, score)
 
 
 # Función para generar y exportar grafo con mejoras integradas

@@ -47,7 +47,7 @@ class EventScraper:
             "ticketmaster": {
                 "api_key": "WQGelSMVlChnAOa4AJWp3JQ9TFNlWc95",
                 "base_url": "https://app.ticketmaster.com/discovery/v2",
-                "max_events": 1500  # Aumentado para alcanzar 2000+
+                "max_events": 1000  # Aumentado para alcanzar 2000+
             }
         }
 
@@ -321,7 +321,7 @@ class EventScraper:
         
         try:
              total_events += self.scrape_seatgeek_events()
-             #total_events += self.scrape_predicthq_events()
+             total_events += self.scrape_predicthq_events()
              total_events += self.scrape_ticketmaster_events()
 
         except Exception as e:

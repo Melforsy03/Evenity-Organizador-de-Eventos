@@ -1,0 +1,65 @@
+[
+  {
+    "query": "Eventos deportivos próximos en Seville, ¿cuáles hay?",
+    "esperados": [
+      "Evento 4 en Seville",
+      "Evento 17 en Seville"
+    ]
+  },
+  {
+    "query": "Muéstrame festivales en Madrid en esas fechas",
+    "esperados": [
+      "Evento 45 en Madrid",
+      "Evento 50 en Madrid"
+    ]
+  },
+  {
+    "query": "¿Qué conciertos hay en Barcelona entre 2025-06-25 y 2025-12-07?",
+    "esperados": [
+      "Evento 1 en Barcelona",
+      "Evento 6 en Barcelona"
+    ]
+  },
+  {
+    "query": "Muéstrame festivales en Madrid en esas fechas",
+    "esperados": [
+      "Evento 45 en Madrid",
+      "Evento 50 en Madrid"
+    ]
+  },
+  {
+    "query": "¿Qué conciertos hay en Barcelona entre 2025-06-25 y 2025-12-07?",
+    "esperados": [
+      "Evento 1 en Barcelona",
+      "Evento 6 en Barcelona"
+    ]
+  },
+  {
+    "query": "Eventos deportivos próximos en Seville, ¿cuáles hay?",
+    "esperados": [
+      "Evento 4 en Seville",
+      "Evento 17 en Seville"
+    ]
+  },
+  {
+    "query": "Eventos deportivos próximos en Seville, ¿cuáles hay?",
+    "esperados": [
+      "Evento 4 en Seville",
+      "Evento 17 en Seville"
+    ]
+  },
+  {
+    "query": "Muéstrame festivales en Ibiza en esas fechas",
+    "esperados": [
+      "Evento 8 en Ibiza",
+      "Evento 21 en Ibiza"
+    ]
+  },
+  {
+    "query": "Muéstrame festivales en Ibiza en esas fechas",
+    "esperados": [
+      "Evento 8 en Ibiza",
+      "Evento 21 en Ibiza"
+    ]
+  }
+]
