@@ -1,0 +1,137 @@
+[
+  {
+    "query": "¿Podrías recomendarme algunos evento deportivos que tendrán lugar en Seville?",
+    "ciudad": "Seville",
+    "esperados": [
+      "Sports de DJ B & Performer A & Band X en Seville",
+      "Sports de DJ B & Group Z & Band X en Seville",
+      "Sports de DJ B & Band X & Artist Y en Seville"
+    ]
+  },
+  {
+    "query": "¿Podrías recomendarme algunos evento deportivos que tendrán lugar en Barcelona?",
+    "ciudad": "Barcelona",
+    "esperados": [
+      "Sports de DJ B & Band X & Group Z en Barcelona",
+      "Sports de Band X en Barcelona",
+      "Sports de Artist Y & Performer A & Band X en Barcelona"
+    ]
+  },
+  {
+    "query": "¿Podrías recomendarme algunos evento deportivos que tendrán lugar en Valencia?",
+    "ciudad": "Valencia",
+    "esperados": [
+      "Sports de DJ B & Artist Y & Band X en Valencia",
+      "Sports de Performer A en Valencia",
+      "Sports de Group Z & Artist Y & Performer A en Valencia"
+    ]
+  },
+  {
+    "query": "Estoy planeando asistir a un evento deportivo en Bilbao, ¿qué opciones hay?",
+    "ciudad": "Bilbao",
+    "esperados": [
+      "Sports de Group Z en Bilbao",
+      "Sports de Group Z & DJ B & Performer A en Bilbao",
+      "Sports de Band X & Group Z en Bilbao"
+    ]
+  },
+  {
+    "query": "Estoy planeando asistir a un festival en Barcelona, ¿qué opciones hay?",
+    "ciudad": "Barcelona",
+    "esperados": [
+      "Festivals de Artist Y & DJ B & Band X en Barcelona",
+      "Festivals de Band X en Barcelona",
+      "Festivals de Performer A & Band X en Barcelona"
+    ]
+  },
+  {
+    "query": "Estoy planeando asistir a un festival en Valencia, ¿qué opciones hay?",
+    "ciudad": "Valencia",
+    "esperados": [
+      "Festivals de Artist Y & Group Z & DJ B en Valencia",
+      "Festivals de Band X & Artist Y & Group Z en Valencia",
+      "Festivals de Group Z & DJ B en Valencia"
+    ]
+  },
+  {
+    "query": "¿Podrías recomendarme algunos evento deportivos que tendrán lugar en Madrid?",
+    "ciudad": "Madrid",
+    "esperados": [
+      "Sports de DJ B en Madrid",
+      "Sports de Performer A & Artist Y & Group Z en Madrid",
+      "Sports de Band X & DJ B & Performer A en Madrid"
+    ]
+  },
+  {
+    "query": "¿Podrías recomendarme algunos conciertos que tendrán lugar en Bilbao?",
+    "ciudad": "Bilbao",
+    "esperados": [
+      "Concerts de Performer A & Band X en Bilbao",
+      "Concerts de Artist Y en Bilbao",
+      "Concerts de Artist Y & Group Z & Band X en Bilbao"
+    ]
+  },
+  {
+    "query": "¿Cuáles son los próximos eventos de concierto en Valencia?",
+    "ciudad": "Valencia",
+    "esperados": [
+      "Concerts de Band X en Valencia",
+      "Concerts de DJ B & Performer A & Group Z en Valencia",
+      "Concerts de Group Z en Valencia"
+    ]
+  },
+  {
+    "query": "¿Qué tipo de conciertos están programados en Seville próximamente?",
+    "ciudad": "Seville",
+    "esperados": [
+      "Concerts de Group Z en Seville",
+      "Concerts de Artist Y & Group Z & DJ B en Seville",
+      "Concerts de DJ B & Group Z & Band X en Seville"
+    ]
+  },
+  {
+    "query": "¿Cuáles son los próximos eventos de festival en Bilbao?",
+    "ciudad": "Bilbao",
+    "esperados": [
+      "Festivals de Performer A & DJ B en Bilbao",
+      "Festivals de DJ B en Bilbao",
+      "Festivals de DJ B & Performer A & Band X en Bilbao"
+    ]
+  },
+  {
+    "query": "Estoy planeando asistir a un concierto en Barcelona, ¿qué opciones hay?",
+    "ciudad": "Barcelona",
+    "esperados": [
+      "Concerts de Artist Y & Band X en Barcelona",
+      "Concerts de DJ B & Artist Y en Barcelona",
+      "Concerts de Group Z en Barcelona"
+    ]
+  },
+  {
+    "query": "Estoy planeando asistir a un festival en Seville, ¿qué opciones hay?",
+    "ciudad": "Seville",
+    "esperados": [
+      "Festivals de DJ B & Group Z en Seville",
+      "Festivals de Group Z en Seville",
+      "Festivals de DJ B en Seville"
+    ]
+  },
+  {
+    "query": "¿Puedes listar festivals relevantes que se celebrarán en Madrid?",
+    "ciudad": "Madrid",
+    "esperados": [
+      "Festivals de Group Z & Band X en Madrid",
+      "Festivals de Artist Y & Performer A en Madrid",
+      "Festivals de Group Z & Artist Y & Band X en Madrid"
+    ]
+  },
+  {
+    "query": "¿Puedes listar conciertos relevantes que se celebrarán en Madrid?",
+    "ciudad": "Madrid",
+    "esperados": [
+      "Concerts de Band X & Performer A en Madrid",
+      "Concerts de Band X & Performer A & Artist Y en Madrid",
+      "Concerts de Band X & Group Z en Madrid"
+    ]
+  }
+]

@@ -323,7 +323,7 @@ def arranque_secuencial(bandeja):
 
     #scraper.run_once()
     #procesador.run_once()
-   #embedding.run_once()
+    embedding.run_once()
     grafo.run_once()
     optimizador.run_once()
 

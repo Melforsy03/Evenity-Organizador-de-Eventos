@@ -261,7 +261,7 @@ def generar_30_escenarios():
 
 # --- Paso 4: ejecutar simulación para todos los escenarios ---
 def comparar_algoritmos_varios_escenarios(eventos, lista_preferencias, n_eventos=10, max_iter=500, repeticiones=3, output_base="resultados_comparacion"):
-    from analisis_meta import simulated_annealing_wrapper, busqueda_aleatoria, hill_climbing
+    from Experimentacion.Simulacion.analisis_meta import simulated_annealing_wrapper, busqueda_aleatoria, hill_climbing
 
     os.makedirs(output_base, exist_ok=True)
 

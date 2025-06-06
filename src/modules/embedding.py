@@ -3,7 +3,6 @@ import faiss
 import pickle
 import numpy as np
 from datetime import datetime
-import os
 from typing import List, Dict, Any
 import logging
 import json
@@ -11,8 +10,8 @@ from dateutil import tz
 from geopy.distance import geodesic
 from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict
-from crawler import EventScraper
-from procesamiento import EventProcessor
+from modules.crawler import EventScraper
+from modules.procesamiento import EventProcessor
 import os
 def make_timezone_aware(dt: datetime) -> datetime:
     if dt.tzinfo is None:
@@ -37,14 +36,19 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class EventEmbedder:
-    def __init__(self, model_name: str = 'paraphrase-multilingual-mpnet-base-v2'):
-        self.model = SentenceTransformer(model_name)
+    def __init__(self, model_name: str = "paraphrase-multilingual-mpnet-base-v2"):
+        try:
+            self.model = SentenceTransformer(model_name, local_files_only=True)
+            print(f"✅ Modelo '{model_name}' cargado desde caché (offline).")
+        except Exception:
+            print(f"⚠️ Modelo '{model_name}' no estaba en caché. Usando conexión a internet para descargarlo...")
+            self.model = SentenceTransformer(model_name)
         self.index = None
         self.events = []
         self.metadata = {
             "created_at": datetime.now().isoformat(),
             "model": model_name,
-            "version": "2.0"  # Versión actualizada
+            "version": "2.0"  
         }
         self.model.to("cpu")
         self.shards = {}
@@ -187,9 +191,8 @@ class EventEmbedder:
 
         print(f"✅ Datos guardados en {output_dir}")
 
-
     @classmethod
-    def load(cls, input_dir: str = "embedding_data"):
+    def load(cls, input_dir: str = "embedding_data", model_name: str = "paraphrase-multilingual-mpnet-base-v2"):
         # Obtiene el directorio del archivo actual (embedding.py)
         current_dir = os.path.dirname(os.path.abspath(__file__))
     
@@ -207,7 +210,7 @@ class EventEmbedder:
         if not os.path.exists(path_embeddings):
             raise FileNotFoundError(f"❌ No se encontró: {path_embeddings}")
 
-        embedder = cls()
+        embedder = cls(model_name)
         embedder.index = faiss.read_index(path_index)
 
         with open(path_metadata, "rb") as f:
@@ -277,7 +280,6 @@ class EventEmbedder:
             return dist <= max_km
         return False
 
-    
     def _calculate_relevance_score(self, event: Dict[str, Any], preferred_categories: List[str]) -> float:
         score = 0
         event_category = event.get("classification", {}).get("primary_category", "")

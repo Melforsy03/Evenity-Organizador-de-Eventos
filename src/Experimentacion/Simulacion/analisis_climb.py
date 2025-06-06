@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 from geopy.distance import geodesic
 import matplotlib.pyplot as plt
-from analisis_meta import generar_30_escenarios , generar_eventos_nuevos
+from Experimentacion.Simulacion.analisis_meta import generar_30_escenarios , generar_eventos_nuevos
 import os
 import sys
 import numpy as np

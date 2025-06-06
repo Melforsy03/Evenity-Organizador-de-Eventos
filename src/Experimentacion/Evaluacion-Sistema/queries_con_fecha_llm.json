@@ -1,0 +1,137 @@
+[
+  {
+    "query": "¿Puedes decirme qué evento deportivos se celebrarán en Seville entre el 15-06-2025 y el 21-09-2025?",
+    "ciudad": "Seville",
+    "esperados": [
+      "Sports de DJ B & Performer A & Band X en Seville",
+      "Sports de DJ B & Group Z & Band X en Seville",
+      "Sports de DJ B & Band X & Artist Y en Seville"
+    ]
+  },
+  {
+    "query": "¿Puedes decirme qué evento deportivos se celebrarán en Barcelona entre el 20-06-2025 y el 22-06-2025?",
+    "ciudad": "Barcelona",
+    "esperados": [
+      "Sports de DJ B & Band X & Group Z en Barcelona",
+      "Sports de Band X en Barcelona",
+      "Sports de Artist Y & Performer A & Band X en Barcelona"
+    ]
+  },
+  {
+    "query": "Estoy buscando evento deportivos en Valencia entre el 09-06-2025 y el 28-06-2025, ¿qué hay?",
+    "ciudad": "Valencia",
+    "esperados": [
+      "Sports de DJ B & Artist Y & Band X en Valencia",
+      "Sports de Performer A en Valencia",
+      "Sports de Group Z & Artist Y & Performer A en Valencia"
+    ]
+  },
+  {
+    "query": "¿Qué evento deportivos están programados en Bilbao en June?",
+    "ciudad": "Bilbao",
+    "esperados": [
+      "Sports de Group Z en Bilbao",
+      "Sports de Group Z & DJ B & Performer A en Bilbao",
+      "Sports de Band X & Group Z en Bilbao"
+    ]
+  },
+  {
+    "query": "¿Qué festivals hay en Barcelona durante el mes de June?",
+    "ciudad": "Barcelona",
+    "esperados": [
+      "Festivals de Artist Y & DJ B & Band X en Barcelona",
+      "Festivals de Band X en Barcelona",
+      "Festivals de Performer A & Band X en Barcelona"
+    ]
+  },
+  {
+    "query": "¿Qué festivals hay en Valencia durante el mes de August?",
+    "ciudad": "Valencia",
+    "esperados": [
+      "Festivals de Artist Y & Group Z & DJ B en Valencia",
+      "Festivals de Band X & Artist Y & Group Z en Valencia",
+      "Festivals de Group Z & DJ B en Valencia"
+    ]
+  },
+  {
+    "query": "Estoy buscando evento deportivos en Madrid entre el 19-07-2025 y el 05-09-2025, ¿qué hay?",
+    "ciudad": "Madrid",
+    "esperados": [
+      "Sports de DJ B en Madrid",
+      "Sports de Performer A & Artist Y & Group Z en Madrid",
+      "Sports de Band X & DJ B & Performer A en Madrid"
+    ]
+  },
+  {
+    "query": "¿Puedes decirme qué conciertos se celebrarán en Bilbao entre el 06-07-2025 y el 05-08-2025?",
+    "ciudad": "Bilbao",
+    "esperados": [
+      "Concerts de Performer A & Band X en Bilbao",
+      "Concerts de Artist Y en Bilbao",
+      "Concerts de Artist Y & Group Z & Band X en Bilbao"
+    ]
+  },
+  {
+    "query": "¿Qué conciertos están programados en Valencia en June?",
+    "ciudad": "Valencia",
+    "esperados": [
+      "Concerts de Band X en Valencia",
+      "Concerts de DJ B & Performer A & Group Z en Valencia",
+      "Concerts de Group Z en Valencia"
+    ]
+  },
+  {
+    "query": "¿Qué conciertos hay en Seville durante el mes de September?",
+    "ciudad": "Seville",
+    "esperados": [
+      "Concerts de Group Z en Seville",
+      "Concerts de Artist Y & Group Z & DJ B en Seville",
+      "Concerts de DJ B & Group Z & Band X en Seville"
+    ]
+  },
+  {
+    "query": "¿Qué festivals hay en Bilbao durante el mes de August?",
+    "ciudad": "Bilbao",
+    "esperados": [
+      "Festivals de Performer A & DJ B en Bilbao",
+      "Festivals de DJ B en Bilbao",
+      "Festivals de DJ B & Performer A & Band X en Bilbao"
+    ]
+  },
+  {
+    "query": "¿Qué conciertos hay en Barcelona durante el mes de July?",
+    "ciudad": "Barcelona",
+    "esperados": [
+      "Concerts de Artist Y & Band X en Barcelona",
+      "Concerts de DJ B & Artist Y en Barcelona",
+      "Concerts de Group Z en Barcelona"
+    ]
+  },
+  {
+    "query": "¿Qué festivals hay en Seville durante el mes de September?",
+    "ciudad": "Seville",
+    "esperados": [
+      "Festivals de DJ B & Group Z en Seville",
+      "Festivals de Group Z en Seville",
+      "Festivals de DJ B en Seville"
+    ]
+  },
+  {
+    "query": "¿Qué festivals están programados en Madrid en July?",
+    "ciudad": "Madrid",
+    "esperados": [
+      "Festivals de Group Z & Band X en Madrid",
+      "Festivals de Artist Y & Performer A en Madrid",
+      "Festivals de Group Z & Artist Y & Band X en Madrid"
+    ]
+  },
+  {
+    "query": "Estoy buscando conciertos en Madrid entre el 27-08-2025 y el 04-09-2025, ¿qué hay?",
+    "ciudad": "Madrid",
+    "esperados": [
+      "Concerts de Band X & Performer A en Madrid",
+      "Concerts de Band X & Performer A & Artist Y en Madrid",
+      "Concerts de Band X & Group Z en Madrid"
+    ]
+  }
+]
