@@ -11,19 +11,18 @@ Define todos los endpoints REST del sistema, incluyendo:
 Este módulo se integra con el sistema multiagente a través de `get_bandeja_global()` y `Mensaje`.
 También inicializa el `EventEmbedder` si no está cargado.
 """
-
-from flask import Flask, request, jsonify
-from core.embedding import EventEmbedder
 import os
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from flask import Flask, request, jsonify
+from core.embedding import EventEmbedder
 from agentes.sistema_multiagente import  Mensaje 
 import threading
 from functools import wraps
 import time
 import queue
-from servidor_base import app, logger
-from contexto_global import get_bandeja_global
+from api.servidor_base import app, logger
+from api.contexto_global import get_bandeja_global
 
 _embedder = None
 _embedder_lock = threading.Lock()

@@ -10,6 +10,6 @@ Es utilizado como punto de entrada directo desde otros hilos o scripts.
 from api.servidor_base import app, logger
 
 def iniciar_api():
-    import servidor_api
+    import api.servidor_api
     logger.info("✅ API iniciada en http://localhost:8502")
     app.run(host="0.0.0.0", port=8502)
