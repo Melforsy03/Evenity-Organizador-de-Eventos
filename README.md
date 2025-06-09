@@ -28,10 +28,10 @@ Cada fuente es accedida mediante claves de API configuradas en los módulos corr
 
 ## Uso y Ejecución
 1. Clonar el repositorio.
-2. Configurar un entorno virtual e instalar dependencias:
+2. Configurar un entorno virtual e instalar dependencias desde la raiz del proyecto:
 
    ```bash
    python -m venv venv
    source venv/bin/activate  # o venv\Scripts\activate en Windows
    pip install -r requirements.txt
-   luego pararse en la raiz del proyecto y ejecutar ./startup.sh
+   ./startup.sh

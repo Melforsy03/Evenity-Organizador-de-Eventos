@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
-from modules.embedding import EventEmbedder
+from core.embedding import EventEmbedder
 
 # ======================= MÉTRICAS =======================
 def coincide(predicho: str, esperados: list) -> bool:
