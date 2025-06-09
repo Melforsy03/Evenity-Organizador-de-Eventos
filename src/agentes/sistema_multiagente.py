@@ -481,7 +481,6 @@ def arranque_secuencial(bandeja):
     procesador = AgenteProcesador("procesador", bandeja)
     embedding = AgenteEmbedding("embedding", bandeja)
     grafo = AgenteGrafo("grafo", bandeja)
-    optimizador = AgenteOptimizador("optimizador", bandeja)
 
     scraper.run_once()
     procesador.run_once()
