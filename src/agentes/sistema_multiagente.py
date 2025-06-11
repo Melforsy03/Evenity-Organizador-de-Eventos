@@ -28,13 +28,13 @@ from core.embedding import fallback_api_call, EventEmbedder
 from scraping.crawler import EventScraper
 from core.procesamiento import procesar_json,EventProcessor
 from scraping.actualizador_dinamico import actualizar_eventos_y_embeddings
-from core.grafo_conocimiento import get_knowledge_graph , enriquecer_resultados_con_razonamiento_avanzado
+from core.grafo_conocimiento import get_knowledge_graph 
 from core.embedding import run_embedding , EventEmbedder
 from core.optimizador import obtener_eventos_optimales
 from core.embedding import load_events_from_folder, EventEmbedder
 from api.lanzar_api import iniciar_api  
-from api.contexto_global import set_bandeja_global
-
+from api.contexto_global import registrar_bandeja , obtener_bandeja
+from datetime import datetime
 # === Mensaje para comunicación entre agentes ===
 class Mensaje:
     def __init__(self, emisor, receptor, contenido):
@@ -83,11 +83,12 @@ class AgenteScraper(AgenteBase):
         while True:
             try:
                 msg = self.bandeja_entrada.get()
-                if msg.receptor == self.nombre and msg.contenido == "scraping_terminado":
-                    # Acción si se desea al recibir el mensaje
-                    pass
+                if msg.receptor == self.nombre and msg.contenido in ["scraping_terminado", "iniciar_scraping"]:
+                    self.run_once()
             except Exception as e:
                 print(f"[Scraper] ❌ Error: {e}")
+
+                  
 # === Agente 2: Procesador ===
 class AgenteProcesador(AgenteBase):
     def run_once(self):
@@ -217,6 +218,8 @@ class AgenteOptimizador(AgenteBase):
             eventos = embedder.events[:50]
             preferencias = {"location": None, "categories": [], "available_dates": None}
             scores = {ev.get("basic_info", {}).get("title", ""): 1.0 for ev in eventos}
+            print(f"[Optimizador] Recibido mensaje de API con preferencias: {preferencias}")
+
             agenda, score, _ = obtener_eventos_optimales(eventos, preferencias, cantidad=5, scores_grafo=scores)
             print(f"✅ [Optimizador] Agenda generada (score: {score:.2f})")
             for i, ev in enumerate(agenda, 1):
@@ -270,197 +273,165 @@ class AgenteOptimizador(AgenteBase):
                 print(f"[Optimizador] ❌ Error: {e}")
 
 class AgenteGapFallback(AgenteBase):
-    def run_once(self):
-        print("🕳️ [GapFallback] Analizando cobertura de eventos...")
-        embedder = EventEmbedder._instance
-        eventos_actuales = embedder.events
-
-        # --- ANALIZAR GAPS ---
-        ciudad_eventos = {}
-        categoria_eventos = {}
-        fecha_eventos = {}
-
-        for ev in eventos_actuales:
-            ciudad = ev.get("spatial_info", {}).get("area", {}).get("city")
-            cat = ev.get("classification", {}).get("primary_category")
-            fecha = ev.get("temporal_info", {}).get("start", "")
-
-            if ciudad:
-                ciudad_eventos.setdefault(ciudad, []).append(ev)
-            if cat:
-                categoria_eventos.setdefault(cat, []).append(ev)
-            if fecha:
-                fecha_clave = fecha[:7]  # agrupar por mes (YYYY-MM)
-                fecha_eventos.setdefault(fecha_clave, []).append(ev)
-
-        ciudades_con_pocos = [c for c, evs in ciudad_eventos.items() if len(evs) < 5]
-        categorias_con_pocos = [c for c, evs in categoria_eventos.items() if len(evs) < 5]
-        meses_con_pocos = [m for m, evs in fecha_eventos.items() if len(evs) < 5]
-
-        print(f"🏙️ Ciudades con pocos eventos: {ciudades_con_pocos}")
-        print(f"📂 Categorías con pocos eventos: {categorias_con_pocos}")
-        print(f"📅 Meses con pocos eventos: {meses_con_pocos}")
-
-        # --- SCRAPING DE FALLBACK ---
-        queries = []
-
-        for ciudad in ciudades_con_pocos:
-            queries.append(f"eventos en {ciudad}")
-        for cat in categorias_con_pocos:
-            queries.append(f"eventos de {cat}")
-        for mes in meses_con_pocos:
-            queries.append(f"eventos en {mes}")
-
-        nuevos_eventos = []
-        processor = EventProcessor()
-        titulos_existentes = {e.get("basic_info", {}).get("title", "").lower() for e in eventos_actuales}
-
-        for query in set(queries):
-            for fuente in ["seatgeek", "predicthq", "ticketmaster"]:
-                eventos_api = fallback_api_call(query, source=fuente)
-                for ev in eventos_api:
-                    titulo = ev.get("basic_info", {}).get("title", "").lower()
-                    if titulo and titulo not in titulos_existentes:
-                        nuevos_eventos.append(ev)
-
-        if not nuevos_eventos:
-            print("❌ [GapFallback] No se encontraron eventos nuevos en fallback.")
-            return
-
-        print(f"🆕 [GapFallback] Se recuperaron {len(nuevos_eventos)} eventos nuevos.")
-
-        # --- GUARDAR NUEVOS EVENTOS COMO ARCHIVOS INDIVIDUALES ---
-        output_folder = "eventos_mejorados"
-        os.makedirs(output_folder, exist_ok=True)
-
-        for ev in nuevos_eventos:
-            titulo = ev.get("basic_info", {}).get("title", "").replace(" ", "_")[:50]
-            safe_name = "".join(c for c in titulo if c.isalnum() or c in "_").rstrip("_")
-            nombre_archivo = f"gap_event_{safe_name}.json"
-            path = os.path.join(output_folder, nombre_archivo)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(ev, f, ensure_ascii=False, indent=2)
-
-        # --- CARGAR ÍNDICE Y AÑADIR NUEVOS EMBEDDINGS ---
-        try:
-            embedder.load_index("embedding_data/eventos.index")
-        except FileNotFoundError:
-            print("⚠️ Índice inexistente, se generará uno nuevo.")
-            # Generar desde cero
-            embedder.generate_embeddings(eventos_actuales + nuevos_eventos)
-            embedder.build_index(EventEmbedder._embeddings, index_type="IVFFlat")
-            embedder.save("embedding_data")
-            print("✅ Índice creado desde cero con nuevos eventos.")
-            return
-
-        embedder.add_new_events(nuevos_eventos)
-        embedder.save_event_data("embedding_data")
-
-        print("✅ [GapFallback] Nuevos embeddings generados e integrados.")
-        self.enviar("visual", "actualizar_embedding")
-
     def ejecutar(self):
+        print("📡 [GapFallback] Agente activo y escuchando...")
         while True:
             try:
                 msg = self.bandeja_entrada.get()
-                if msg.receptor == self.nombre and msg.contenido in ["verificar_gaps", "forzar_fallback"]:
-                    self.run_once()
-            except Exception as e:
-                print(f"[GapFallback] ❌ Error: {e}")
+                if msg.receptor != self.nombre or not isinstance(msg.contenido, dict):
+                    continue
 
+                print(f"⚠️ [GapFallback] Disparo solicitado: {msg.contenido}")
+
+                query = msg.contenido.get("query", "")
+                ciudad = msg.contenido.get("ciudad", None)  # aún no usado
+                categoria = msg.contenido.get("categoria", None)  # aún no usado
+                respuesta_clave = msg.contenido.get("respuesta", "fallback_resultado")
+
+                fecha_inicio = msg.contenido.get("fecha_inicio")
+                fecha_fin = msg.contenido.get("fecha_fin")
+
+                # Conversión segura si llegan fechas tipo string
+                if isinstance(fecha_inicio, str):
+                    fecha_inicio = fecha_inicio.split("T")[0]
+                if isinstance(fecha_fin, str):
+                    fecha_fin = fecha_fin.split("T")[0]
+
+                # Si no hay ni ciudad, ni categoría, ni fechas => NO DISPARAR
+                if not any([ciudad, categoria, fecha_inicio, fecha_fin]):
+                    print("🚫 [GapFallback] Fallback ignorado: no hay filtros suficientes.")
+                    self.enviar("api", {
+                        "key": respuesta_clave,
+                        "data": [],
+                        "mensaje": "No se ejecutó fallback: se requiere al menos ciudad, categoría o fecha"
+                    })
+                    continue
+                eventos = fallback_api_call(
+                    query=query,
+                    start_date=fecha_inicio,
+                    end_date=fecha_fin,
+                    source="ticketmaster"  # puedes cambiar esto dinámicamente
+                )
+
+                print(f"🎯 [GapFallback] Recuperados {len(eventos)} eventos")
+
+                self.enviar("api", {
+                    "key": respuesta_clave,
+                    "data": eventos,
+                    "mensaje": f"Eventos recuperados vía fallback: {len(eventos)}"
+                })
+                if eventos:
+                    embedder = EventEmbedder.get_instance()
+                    embedder.agregar_eventos(eventos)
+                    print(f"📥 [GapFallback] {len(eventos)} eventos agregados dinámicamente al sistema") 
+                    
+            except Exception as e:
+                print(f"❌ [GapFallback] Error: {e}")
+                self.enviar("api", {
+                    "key": "fallback_resultado",
+                    "error": str(e)
+                })
+                
 class AgenteBusquedaInteractiva(AgenteBase):
-    def __init__(self, nombre, bandeja_entrada):
-        super().__init__(nombre, bandeja_entrada)
-        from core.embedding import EventEmbedder
-        self.embedder = EventEmbedder._instance
-        self.grafo = None
-
     def ejecutar(self):
+        print("📡 [BusquedaInteractiva] Agente activo y escuchando...")
         while True:
             try:
                 msg = self.bandeja_entrada.get()
+                if msg.receptor != self.nombre:
+                    self.bandeja_entrada.put(msg)  # volver a poner si no es nuestro
+                    continue
+                if not isinstance(msg.contenido, dict):
+                    print(f"⚠️ [BusquedaInteractiva] Mensaje inválido ignorado: {msg}")
+                    continue
 
-                if msg.receptor == self.nombre and isinstance(msg.contenido, dict) and "query" in msg.contenido:
-                    query = msg.contenido.get("query", "").strip()
-                    ciudad = msg.contenido.get("ciudad", "").strip()
-                    fecha_i = msg.contenido.get("fecha_inicio")
-                    fecha_f = msg.contenido.get("fecha_fin")
-                    categoria = msg.contenido.get("categoria", "").strip()
-                    respuesta_key = msg.contenido.get("respuesta", "res_busqueda")
 
-                    # ✅ Validar que la query esté presente
-                    if not query:
-                        print("⚠️ [BusquedaInteractiva] Query vacía. Ignorando búsqueda.")
-                        self.enviar("api", {
-                            "key": respuesta_key,
-                            "data": [],
-                            "error": "Debe ingresar una consulta de búsqueda (query)."
-                        })
+                query = msg.contenido.get("query", "").strip()
+                ciudad = msg.contenido.get("ciudad")
+                categoria = msg.contenido.get("categoria")
+                fecha_inicio = msg.contenido.get("fecha_inicio")
+                fecha_fin = msg.contenido.get("fecha_fin")
+                clave_respuesta = msg.contenido.get("respuesta", "res_busqueda")
+
+                print(f"🔍 [BusquedaInteractiva] Recibida query: '{query}'")
+
+                if not query:
+                    self.enviar("api", {
+                        "key": clave_respuesta,
+                        "data": [],
+                        "mensaje": "Consulta vacía"
+                    })
+                    continue
+
+                embedder = EventEmbedder.get_instance()
+
+                # === Mejora 1: usar shards si hay ciudad
+                if ciudad and ciudad in embedder.shards:
+                    resultados, _ = embedder.search(query, shard_key=ciudad, k=20)
+                else:
+                    resultados = embedder.buscar_eventos(query, top_k=20)
+
+                # === Mejora 2: convertir fechas solo una vez
+                fecha_inicio_dt = datetime.fromisoformat(fecha_inicio).date() if fecha_inicio else None
+                fecha_fin_dt = datetime.fromisoformat(fecha_fin).date() if fecha_fin else None
+
+                # === Mejora 3: aplicar filtros
+                eventos_filtrados = []
+                for ev in resultados:
+                    ciudad_ev = ev.get("spatial_info", {}).get("area", {}).get("city")
+                    categoria_ev = ev.get("classification", {}).get("primary_category")
+                    fecha_ev_str = ev.get("temporal_info", {}).get("start")
+
+                    if ciudad and ciudad != ciudad_ev:
                         continue
+                    if categoria and categoria != categoria_ev:
+                        continue
+                    if fecha_ev_str:
+                        try:
+                            fecha_ev = datetime.fromisoformat(fecha_ev_str).date()
+                            if fecha_inicio_dt and fecha_ev < fecha_inicio_dt:
+                                continue
+                            if fecha_fin_dt and fecha_ev > fecha_fin_dt:
+                                continue
+                        except:
+                            continue
 
-                    print(f"🔍 [BusquedaInteractiva] Procesando búsqueda: {query}")
+                    eventos_filtrados.append(ev)
 
-                    # Búsqueda semántica inicial
-                    resultados, _ = self.embedder.filtered_search(query, k=100)
+                print(f"📊 [BusquedaInteractiva] Eventos tras filtro: {len(eventos_filtrados)}")
 
-                    # Filtro por ciudad (si se proporciona)
-                    if ciudad:
-                        resultados = [ev for ev in resultados if ev.get("spatial_info", {}).get("area", {}).get("city", "").lower() == ciudad.lower()]
+                # === Mejora 4: responder siempre, incluso con pocos eventos
+                self.enviar("api", {
+                    "key": clave_respuesta,
+                    "data": eventos_filtrados,
+                    "mensaje": f"Se encontraron {len(eventos_filtrados)} evento(s) tras búsqueda principal"
+                })
 
-                    # Guardar tamaño antes de aplicar categoría
-                    count_pre_categoria = len(resultados)
+                # Si son menos de 2, disparar fallback
+                if len(eventos_filtrados) < 2:
+                    print("⚠️ [BusquedaInteractiva] Disparando fallback por baja cobertura")
 
-                    # Filtro por categoría (si se proporciona)
-                    if categoria:
-                        resultados = [ev for ev in resultados if ev.get("classification", {}).get("primary_category") == categoria]
-
-                    # Filtro por fechas
-                    if fecha_i and fecha_f:
-                        resultados = [
-                            ev for ev in resultados
-                            if ev.get("temporal_info", {}).get("start")
-                            and fecha_i <= ev["temporal_info"]["start"][:10] <= fecha_f
-                        ]
-
-                    # Enriquecer con grafo si está disponible
-                    if resultados and self.grafo:
-                        resultados = [ev for ev, _ in enriquecer_resultados_con_razonamiento_avanzado(resultados, self.grafo, query, k=50)]
-
-                    # 🔥 Disparar fallback si hay pocas coincidencias
-                    condiciones = [
-                        len(resultados) == 0,
-                        (categoria and count_pre_categoria <= 1),
-                        (fecha_i and fecha_f and all(
-                            not ev.get("temporal_info", {}).get("start") or not (fecha_i <= ev["temporal_info"]["start"][:10] <= fecha_f)
-                            for ev in self.embedder.events
+                    fallback_msg = {
+                        "query": query,
+                        "ciudad": ciudad,
+                        "categoria": categoria,
+                        "fecha_inicio": fecha_inicio,
+                        "fecha_fin": fecha_fin,
+                        "respuesta": clave_respuesta
+                    }
+                    bandeja_fallback = obtener_bandeja("gapfallback")
+                    if bandeja_fallback:
+                        bandeja_fallback.put(Mensaje(
+                            emisor=self.nombre,
+                            receptor="gapfallback",
+                            contenido=fallback_msg
                         ))
-                    ]
-                    if any(condiciones):
-                        print("🛑 [BusquedaInteractiva] Disparando fallback por baja cobertura...")
-                        self.enviar("gapfallback", "forzar_fallback")
-
-                    # Guardar resultados
-                    with open("resultados_interactivos.json", "w", encoding="utf-8") as f:
-                        json.dump(resultados, f, ensure_ascii=False, indent=2)
-
-                    print(f"✅ [BusquedaInteractiva] Resultados guardados: {len(resultados)} eventos")
-
-                    # Responder a la API si aplica
-                    if respuesta_key:
-                        self.enviar("api", {
-                            "key": respuesta_key,
-                            "data": resultados
-                        })
-
-                elif msg.receptor == self.nombre and isinstance(msg.contenido, dict) and "grafo" in msg.contenido:
-                    self.grafo = msg.contenido["grafo"]
-                    print("📥 [BusquedaInteractiva] Grafo recibido desde AgenteGrafo")
+                    else:
+                        print("❌ No se pudo obtener la bandeja para gapfallback")
 
             except Exception as e:
-                print(f"[BusquedaInteractiva] ❌ Error: {e}")
-                self.enviar("visual", {"error": str(e)})
+                print(f"❌ [BusquedaInteractiva] Error: {e}")
 
-# === Función para arranque secuencial ===
 def arranque_secuencial(bandeja):
     eventos_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../eventos_mejorados"))
     eventos = load_events_from_folder(eventos_dir)
@@ -477,10 +448,10 @@ def arranque_secuencial(bandeja):
         embedder.build_index(EventEmbedder._embeddings, index_type="IVFFlat")
         embedder.save("embedding_data")
 
-    scraper = AgenteScraper("scraper", bandeja)
-    procesador = AgenteProcesador("procesador", bandeja)
-    embedding = AgenteEmbedding("embedding", bandeja)
-    grafo = AgenteGrafo("grafo", bandeja)
+        scraper = AgenteScraper("scraper", bandeja)
+        procesador = AgenteProcesador("procesador", bandeja)
+        embedding = AgenteEmbedding("embedding", bandeja)
+        grafo = AgenteGrafo("grafo", bandeja)
 
     scraper.run_once()
     procesador.run_once()
@@ -488,23 +459,25 @@ def arranque_secuencial(bandeja):
     grafo.run_once()
 
 # === Función para iniciar agentes en threads (escuchando mensajes) ===
-def iniciar_threads(bandeja):
+def iniciar_threads():
     agentes = [
-        AgenteScraper("scraper", bandeja),
-        AgenteProcesador("procesador", bandeja),
-        AgenteActualizador("actualizador", bandeja),
-        AgenteGrafo("grafo", bandeja),
-        AgenteEmbedding("embedding", bandeja),
-        AgenteOptimizador("optimizador", bandeja),
-        AgenteGapFallback("gapfallback", bandeja),
-        AgenteBusquedaInteractiva("busqueda_interactiva", bandeja),
-
+        AgenteScraper("scraper", Queue()),
+        AgenteProcesador("procesador", Queue()),
+        AgenteActualizador("actualizador", Queue()),
+        AgenteGrafo("grafo", Queue()),
+        AgenteEmbedding("embedding", Queue()),
+        AgenteOptimizador("optimizador", Queue()),
+        AgenteGapFallback("gapfallback", Queue()),
+        AgenteBusquedaInteractiva("busqueda_interactiva", Queue()),
     ]
+
+    for agente in agentes:
+        registrar_bandeja(agente.nombre, agente.bandeja_entrada)
 
     hilos = [Thread(target=a.ejecutar, daemon=True) for a in agentes]
     for h in hilos:
         h.start()
-    print("✅ Todos los agentes en modo escucha iniciados.")
+    print("✅ Todos los agentes con bandeja propia están activos.")
 
 # === Función para enviar mensaje que inicia la cadena de actualización periódica ===
 def disparar_actualizacion_periodica(bandeja):
@@ -568,14 +541,12 @@ def verificar_api_lista():
         time.sleep(1)
     return False
 
-# En sistema_multiagente.py, modificar el main:
 if __name__ == "__main__":
     print("🚀 Iniciando sistema multiagente...")
 
    # 1. Inicialización del sistema
     bandeja = Queue()
-    set_bandeja_global(bandeja)      
-
+    registrar_bandeja("api", bandeja)
     # 2. Ejecutar arranque secuencial PRIMERO
     print("⚙️ Ejecutando arranque secuencial...")
     arranque_secuencial(bandeja)
@@ -595,7 +566,7 @@ if __name__ == "__main__":
         subprocess.Popen([
             "streamlit", 
             "run", 
-            "./src/modules/visual.py",
+            "./src/app/visual.py",
             "--server.address=localhost",
             "--server.port=8501"
         ])

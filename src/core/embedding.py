@@ -485,22 +485,28 @@ def run_embedding():
     
     return embedder
 
-def fallback_api_call(query: str, start_date: str = None, end_date: str = None, source="seatgeek"):
+def fallback_api_call(query: str, start_date: str = None, end_date: str = None,
+                      ciudad: str = None, categoria: str = None, source="seatgeek"):
     scraper = EventScraper()
     processor = EventProcessor()
     nuevos_eventos = []
-
+    
+   
     if source == "seatgeek":
         url = "https://api.seatgeek.com/2/events"
         params = {
             "client_id": scraper.sources_config["seatgeek"]["client_id"],
-            "q": query,
+            #"q": query,
             "per_page": 10
         }
         if start_date:
             params["datetime_local.gte"] = start_date
         if end_date:
             params["datetime_local.lte"] = end_date
+        if ciudad:
+            params["venue.city"] = ciudad
+        if categoria:
+            params["taxonomies.name"] = categoria
 
         response = scraper._make_request(url, params=params)
         if response:
@@ -517,14 +523,18 @@ def fallback_api_call(query: str, start_date: str = None, end_date: str = None, 
             "Accept": "application/json"
         }
         params = {
-            "q": query,
+            #"q": query,
             "limit": 10,
-            "country": "ES"
+            #"country": "US"
         }
         if start_date:
             params["active.gte"] = start_date
         if end_date:
             params["active.lte"] = end_date
+        if categoria:
+            params["category"] = categoria
+        if ciudad:
+            params["place.scope"] = ciudad
 
         response = scraper._make_request(url, params=params, headers=headers)
         if response:
@@ -538,14 +548,18 @@ def fallback_api_call(query: str, start_date: str = None, end_date: str = None, 
         url = f"{scraper.sources_config['ticketmaster']['base_url']}/events.json"
         params = {
             "apikey": scraper.sources_config["ticketmaster"]["api_key"],
-            "keyword": query,
-            "countryCode": "ES",
+            #"keyword": query,
+            #"countryCode": "US",
             "size": 10
         }
         if start_date:
             params["startDateTime"] = start_date + "T00:00:00Z"
         if end_date:
             params["endDateTime"] = end_date + "T23:59:59Z"
+        if ciudad:
+            params["city"] = ciudad
+        if categoria:
+            params["classificationName"] = categoria
 
         response = scraper._make_request(url, params=params)
         if response:
@@ -555,4 +569,5 @@ def fallback_api_call(query: str, start_date: str = None, end_date: str = None, 
                 if "error" not in ev:
                     nuevos_eventos.append(ev)
 
-    return nuevos_eventos
+    # 🔐 Garantizar máximo de 10
+    return nuevos_eventos[:10]

@@ -69,19 +69,35 @@ def ensure_initialized(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# Función de comunicación con los agentes
-def enviar_y_esperar_respuesta(receptor, contenido, respuesta_key, timeout=10):
-    bandeja = get_bandeja_global()
-    bandeja.put(Mensaje("api", receptor, contenido))
+from api.contexto_global import obtener_bandeja
+
+def enviar_y_esperar_respuesta(receptor, contenido, respuesta_key, timeout=30):
+    bandeja_destino = obtener_bandeja(receptor)
+    if bandeja_destino is None:
+        raise RuntimeError(f"❌ Bandeja para '{receptor}' no encontrada")
+
+    bandeja_api = obtener_bandeja("api")
+    if bandeja_api is None:
+        raise RuntimeError("❌ Bandeja de la API no está registrada")
+
+    print(f"📨 [API] Enviando a {receptor}: {contenido}")
+    bandeja_destino.put(Mensaje("api", receptor, contenido))
+
     inicio = time.time()
     while time.time() - inicio < timeout:
         try:
-            respuesta = bandeja.get_nowait()
-            if respuesta.receptor == "api" and isinstance(respuesta.contenido, dict) and respuesta.contenido.get("key") == respuesta_key:
-                return respuesta.contenido.get("data")
+            respuesta = bandeja_api.get(timeout=1)
+            if isinstance(respuesta, Mensaje):
+                if (respuesta.receptor == "api" and
+                    isinstance(respuesta.contenido, dict) and
+                    respuesta.contenido.get("key") == respuesta_key):
+                    return respuesta.contenido.get("data")
+                else:
+                    # No era nuestra respuesta, lo volvemos a poner
+                    bandeja_api.put(respuesta)
         except queue.Empty:
-            time.sleep(0.2)
-    raise TimeoutError(f"No se recibió respuesta del agente '{receptor}' para '{respuesta_key}'")
+            continue
+    raise TimeoutError(f"No se recibió respuesta del agente '{receptor}' para clave '{respuesta_key}'")
 
 @app.route("/status")
 @ensure_initialized
@@ -133,7 +149,9 @@ def buscar():
             "fecha_fin": data.get("fecha_fin"),
             "respuesta": "res_busqueda"
         }
+        print("📨 [API] Enviando a busqueda_interactiva:", contenido)
         resultado = enviar_y_esperar_respuesta("busqueda_interactiva", contenido, "res_busqueda")
+        print("✅ [API] Resultado búsqueda:", resultado)
         return jsonify(resultado)
     except TimeoutError as e:
         return jsonify({"error": "Agente de búsqueda no respondió a tiempo"}), 504
@@ -158,7 +176,9 @@ def generar_agenda_optima():
             "preferencias": preferencias,
             "respuesta": "res_agenda"
         }
+        print("📨 [API] Enviando a optimizador:", contenido)
         resultado = enviar_y_esperar_respuesta("optimizador", contenido, "res_agenda")
+        print("✅ [API] Resultado optimizador:", resultado)
         return jsonify({
             "agenda": resultado.get("agenda", []),
             "count": len(resultado.get("agenda", [])),
@@ -169,4 +189,3 @@ def generar_agenda_optima():
     except Exception as e:
         logger.error(f"Error en /agenda: {str(e)}")
         return jsonify({"error": str(e)}), 500
-

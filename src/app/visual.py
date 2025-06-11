@@ -63,7 +63,7 @@ if st.button("🔍 Buscar eventos"):
                         "fecha_inicio": str(fecha_inicio),
                         "fecha_fin": str(fecha_fin)
                     },
-                    timeout=10
+                    timeout=30
                 )
                 if respuesta.status_code == 200:
                     eventos = respuesta.json()
@@ -91,7 +91,7 @@ if st.button("📅 Generar agenda personalizada"):
                     "fecha_inicio": str(fecha_inicio),
                     "fecha_fin": str(fecha_fin)
                 },
-                timeout=10
+                timeout=30
             )
             if res.status_code == 200:
                 data = res.json()

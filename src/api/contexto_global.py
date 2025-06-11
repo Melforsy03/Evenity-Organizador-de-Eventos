@@ -1,21 +1,20 @@
 # contexto_global.py
+
 """
-Módulo de contexto compartido (contexto.py)
+Módulo de contexto compartido
 
-Define una bandeja global para facilitar la comunicación entre módulos sin necesidad de
-pasar explícitamente la referencia entre funciones. Este patrón es útil en el sistema multiagente
-donde múltiples hilos comparten una cola de mensajes común.
-
-Funciones:
-- `set_bandeja_global(bandeja)`
-- `get_bandeja_global()`
+Permite registrar y acceder a las bandejas (colas) por agente.
 """
 
-_bandeja_global = None
+from queue import Queue
 
-def set_bandeja_global(bandeja):
-    global _bandeja_global
-    _bandeja_global = bandeja
+_bandejas_por_agente = {}
 
-def get_bandeja_global():
-    return _bandeja_global
+def registrar_bandeja(nombre_agente: str, bandeja: Queue):
+    _bandejas_por_agente[nombre_agente] = bandeja
+
+def obtener_bandeja(nombre_agente: str) -> Queue:
+    return _bandejas_por_agente.get(nombre_agente)
+
+def get_all_bandejas():
+    return _bandejas_por_agente
