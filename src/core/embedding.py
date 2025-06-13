@@ -279,7 +279,12 @@ class EventEmbedder:
             parts.append(f"Popularidad: {popularidad}")
 
         return ". ".join(parts) + "."
-
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            raise RuntimeError("EventEmbedder no ha sido inicializado")
+        return cls._instance
+    
     def save(self, output_dir: str = "embedding_data"):
         os.makedirs(output_dir, exist_ok=True)
         

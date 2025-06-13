@@ -22,7 +22,7 @@ from functools import wraps
 import time
 import queue
 from api.servidor_base import app, logger
-from api.contexto_global import get_bandeja_global
+from api.contexto_global import obtener_bandeja
 
 _embedder = None
 _embedder_lock = threading.Lock()
@@ -39,7 +39,7 @@ def get_embedder(allow_empty=True, max_wait=30):
             if not _initialized:
                 try:
                     logger.info("Initializing embedder...")
-                    _embedder = EventEmbedder()
+                    _embedder = EventEmbedder._instance
                     try:
                         _embedder.load("embedding_data")
                         logger.info("Embedder data loaded successfully")
@@ -69,7 +69,6 @@ def ensure_initialized(f):
         return f(*args, **kwargs)
     return decorated_function
 
-from api.contexto_global import obtener_bandeja
 
 def enviar_y_esperar_respuesta(receptor, contenido, respuesta_key, timeout=30):
     bandeja_destino = obtener_bandeja(receptor)

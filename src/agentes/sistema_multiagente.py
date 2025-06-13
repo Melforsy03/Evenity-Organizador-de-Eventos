@@ -321,8 +321,8 @@ class AgenteGapFallback(AgenteBase):
                     "mensaje": f"Eventos recuperados vía fallback: {len(eventos)}"
                 })
                 if eventos:
-                    embedder = EventEmbedder.get_instance()
-                    embedder.agregar_eventos(eventos)
+                    embedder = EventEmbedder._instance
+                    embedder.add_new_events(eventos)
                     print(f"📥 [GapFallback] {len(eventos)} eventos agregados dinámicamente al sistema") 
                     
             except Exception as e:
@@ -363,13 +363,13 @@ class AgenteBusquedaInteractiva(AgenteBase):
                     })
                     continue
 
-                embedder = EventEmbedder.get_instance()
+                embedder = EventEmbedder._instance
 
                 # === Mejora 1: usar shards si hay ciudad
                 if ciudad and ciudad in embedder.shards:
                     resultados, _ = embedder.search(query, shard_key=ciudad, k=20)
                 else:
-                    resultados = embedder.buscar_eventos(query, top_k=20)
+                    resultados = embedder.filtered_search(query, top_k=20)
 
                 # === Mejora 2: convertir fechas solo una vez
                 fecha_inicio_dt = datetime.fromisoformat(fecha_inicio).date() if fecha_inicio else None
@@ -432,12 +432,14 @@ class AgenteBusquedaInteractiva(AgenteBase):
             except Exception as e:
                 print(f"❌ [BusquedaInteractiva] Error: {e}")
 
-def arranque_secuencial(bandeja):
+def arranque_secuencial(bandeja_api):
+    from core.embedding import load_events_from_folder
+
     eventos_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../eventos_mejorados"))
     eventos = load_events_from_folder(eventos_dir)
 
     try:
-        # ✅ Intentar cargar embeddings existentes
+        # ✅ Cargar embeddings existentes o generarlos
         embedder = EventEmbedder.load("embedding_data")
         print("✅ Embeddings cargados desde disco.")
     except Exception as e:
@@ -448,16 +450,23 @@ def arranque_secuencial(bandeja):
         embedder.build_index(EventEmbedder._embeddings, index_type="IVFFlat")
         embedder.save("embedding_data")
 
-        scraper = AgenteScraper("scraper", bandeja)
-        procesador = AgenteProcesador("procesador", bandeja)
-        embedding = AgenteEmbedding("embedding", bandeja)
-        grafo = AgenteGrafo("grafo", bandeja)
+    # ✅ Crear agentes y registrar sus bandejas
+    scraper = AgenteScraper("scraper", Queue())
+    procesador = AgenteProcesador("procesador", Queue())
+    embedding = AgenteEmbedding("embedding", Queue())
+    grafo = AgenteGrafo("grafo", Queue())
 
+    registrar_bandeja("scraper", scraper.bandeja_entrada)
+    registrar_bandeja("procesador", procesador.bandeja_entrada)
+    registrar_bandeja("embedding", embedding.bandeja_entrada)
+    registrar_bandeja("grafo", grafo.bandeja_entrada)
+
+    # ✅ Ejecutar agentes principales una vez
     scraper.run_once()
     procesador.run_once()
     embedding.run_once()
     grafo.run_once()
-
+    
 # === Función para iniciar agentes en threads (escuchando mensajes) ===
 def iniciar_threads():
     agentes = [
@@ -558,9 +567,9 @@ if __name__ == "__main__":
 
     # 4. Iniciar agentes en segundo plano
     print("🤖 Iniciando agentes en segundo plano...")
-    iniciar_threads(bandeja)
+    iniciar_threads()
 
-    # 5. Lanzar frontend cuando todo esté listo
+    # 5. Lanzar frontend cuando todo esté listoP
     if verificar_api_lista():
         print("🖥️ Lanzando interfaz visual...")
         subprocess.Popen([
