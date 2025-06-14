@@ -53,4 +53,4 @@ jobs:
           crear_issue "Semana 5: Construcción y uso del grafo de conocimiento" "Implementar grafo para relaciones y recomendaciones avanzadas."
           crear_issue "Semana 6: Interfaz de usuario con Streamlit" "Desarrollar visual.py para UI interactiva con filtros y agendas."
           crear_issue "Semana 7: Optimización y mejoras finales" "Refinar motor de recomendaciones, gestión de sesiones y documentación."
-          crear_issue "Semana 8: Preparación para entrega y presentación" "Redacción del README, reporte y preparación de la presentación final."
+          crear_issue "Semana 8: Preparación para la entrega y presentación" "Redacción del README, reporte y preparación de la presentación final."
