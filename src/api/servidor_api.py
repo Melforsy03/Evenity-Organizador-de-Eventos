@@ -2,31 +2,36 @@
 """
 Módulo de endpoints principales de la API (servidor_api.py)
 
-Define todos los endpoints REST del sistema, incluyendo:
-- Verificación de estado de inicialización
-- Consulta de ciudades y categorías disponibles
-- Búsqueda semántica de eventos
-- Generación de agenda óptima
-
-Este módulo se integra con el sistema multiagente a través de `get_bandeja_global()` y `Mensaje`.
-También inicializa el `EventEmbedder` si no está cargado.
+Versión corregida con:
+- Mejor manejo de concurrencia
+- Sincronización adecuada de recursos compartidos
+- Mejor serialización de eventos
+- Manejo robusto de errores
 """
 import os
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from flask import Flask, request, jsonify
 from core.embedding import EventEmbedder
-from agentes.sistema_multiagente import  Mensaje 
+from agentes.sistema_multiagente import Mensaje, obtener_bandeja
 import threading
 from functools import wraps
 import time
 import queue
-from api.servidor_base import app, logger
+from api.servidor_base import app, logger , response_queues , response_queues_lock
 from api.contexto_global import obtener_bandeja
+import uuid
+from datetime import datetime, date
+from copy import deepcopy
 
 _embedder = None
 _embedder_lock = threading.Lock()
 _initialized = False
+resultados_api = {}
+resultados_api_lock = threading.Lock()
+
+def get_response_queues():
+    return response_queues, response_queues_lock
 
 def get_embedder(allow_empty=True, max_wait=30):
     global _embedder, _initialized
@@ -69,8 +74,24 @@ def ensure_initialized(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def limpiar_eventos(lista):
+    """Limpia los eventos para serialización segura"""
+    nuevos = []
+    for ev in lista:
+        try:
+            nuevo = deepcopy(ev)
+            # Eliminar campos problemáticos
+            for key in list(nuevo.keys()):
+                if key.startswith('__'):  # Eliminar todos los campos internos
+                    del nuevo[key]
+                elif isinstance(nuevo[key], (datetime, date)):
+                    nuevo[key] = str(nuevo[key])  # Convertir fechas a string
+            nuevos.append(nuevo)
+        except Exception as e:
+            logger.error(f"Error limpiando evento: {e}")
+    return nuevos
 
-def enviar_y_esperar_respuesta(receptor, contenido, respuesta_key, timeout=30):
+def enviar_y_esperar_respuesta(receptor, contenido, respuesta_key, timeout=60):
     bandeja_destino = obtener_bandeja(receptor)
     if bandeja_destino is None:
         raise RuntimeError(f"❌ Bandeja para '{receptor}' no encontrada")
@@ -79,7 +100,7 @@ def enviar_y_esperar_respuesta(receptor, contenido, respuesta_key, timeout=30):
     if bandeja_api is None:
         raise RuntimeError("❌ Bandeja de la API no está registrada")
 
-    print(f"📨 [API] Enviando a {receptor}: {contenido}")
+    logger.info(f"📨 [API] Enviando a {receptor}: {contenido}")
     bandeja_destino.put(Mensaje("api", receptor, contenido))
 
     inicio = time.time()
@@ -140,29 +161,76 @@ def get_categorias():
 def buscar():
     try:
         data = request.json or {}
+        clave_respuesta = data.get("respuesta") or f"res_busqueda_{uuid.uuid4().hex}"
+        
+        # Crear una cola específica para esta solicitud
+        with response_queues_lock:
+            response_queues[clave_respuesta] = queue.Queue()
+            response_queue = response_queues[clave_respuesta]
+
         contenido = {
             "query": data.get("query", ""),
             "ciudad": data.get("ciudad"),
             "categoria": data.get("categoria"),
             "fecha_inicio": data.get("fecha_inicio"),
             "fecha_fin": data.get("fecha_fin"),
-            "respuesta": "res_busqueda"
+            "respuesta": clave_respuesta
         }
-        print("📨 [API] Enviando a busqueda_interactiva:", contenido)
-        resultado = enviar_y_esperar_respuesta("busqueda_interactiva", contenido, "res_busqueda")
-        print("✅ [API] Resultado búsqueda:", resultado)
-        return jsonify(resultado)
-    except TimeoutError as e:
-        return jsonify({"error": "Agente de búsqueda no respondió a tiempo"}), 504
-    except Exception as e:
-        logger.error(f"Error en /buscar: {str(e)}")
-        return jsonify({"error": str(e)}), 500
 
+        logger.info(f"📨 [API] Enviando a busqueda_interactiva: {contenido}")
+        
+        # Enviar mensaje
+        bandeja_busqueda = obtener_bandeja("busqueda_interactiva")
+        if bandeja_busqueda:
+            bandeja_busqueda.put(Mensaje(
+                emisor="api",
+                receptor="busqueda_interactiva",
+                contenido=contenido
+            ))
+        else:
+            logger.error("❌ Bandeja de búsqueda no disponible")
+            return jsonify({"status": "error", "mensaje": "Servicio no disponible"}), 503
+
+        # Esperar respuesta en la cola específica
+        try:
+            respuesta = response_queue.get(timeout=60)  # 60 segundos timeout
+            eventos_limpios = limpiar_eventos(respuesta.get("data", []))
+            
+            logger.info(f"✅ [API] Enviando {len(eventos_limpios)} eventos a frontend")
+            return jsonify({
+                "status": "ok",
+                "eventos": eventos_limpios,
+                "mensaje": respuesta.get("mensaje", ""),
+                "total": len(eventos_limpios)
+            })
+        except queue.Empty:
+            logger.error(f"❌ [API] Timeout esperando resultados para {clave_respuesta}")
+            return jsonify({
+                "status": "error",
+                "mensaje": "El agente de búsqueda no respondió a tiempo"
+            }), 504
+        finally:
+            with response_queues_lock:
+                response_queues.pop(clave_respuesta, None)
+
+    except Exception as e:
+        logger.error(f"❌ Error crítico en /buscar: {str(e)}", exc_info=True)
+        return jsonify({
+            "status": "error",
+            "mensaje": "Error interno del servidor"
+        }), 500
 @app.route("/agenda", methods=["POST"])
 @ensure_initialized
 def generar_agenda_optima():
     try:
         data = request.json or {}
+        clave_respuesta = "res_agenda_" + uuid.uuid4().hex
+        
+        # Registrar la solicitud
+        with response_queues_lock:
+            response_queues[clave_respuesta] = queue.Queue()
+            response_queue = response_queues[clave_respuesta]
+
         preferencias = {
             "location": data.get("ciudad"),
             "categories": data.get("categorias", []),
@@ -171,20 +239,39 @@ def generar_agenda_optima():
                 data.get("fecha_fin")
             ) if data.get("fecha_inicio") and data.get("fecha_fin") else None
         }
+        
         contenido = {
             "preferencias": preferencias,
-            "respuesta": "res_agenda"
+            "respuesta": clave_respuesta
         }
-        print("📨 [API] Enviando a optimizador:", contenido)
-        resultado = enviar_y_esperar_respuesta("optimizador", contenido, "res_agenda")
-        print("✅ [API] Resultado optimizador:", resultado)
-        return jsonify({
-            "agenda": resultado.get("agenda", []),
-            "count": len(resultado.get("agenda", [])),
-            "score": resultado.get("score", 0)
-        })
+        
+        # Enviar solicitud al optimizador
+        bandeja_optimizador = obtener_bandeja("optimizador")
+        if bandeja_optimizador:
+            bandeja_optimizador.put(Mensaje(
+                emisor="api",
+                receptor="optimizador",
+                contenido=contenido
+            ))
+        else:
+            raise RuntimeError("Bandeja del optimizador no disponible")
+
+        # Esperar respuesta
+        try:
+            respuesta = response_queue.get(timeout=60)
+            agenda_limpia = limpiar_eventos(respuesta.get("data", {}).get("agenda", []))
+            return jsonify({
+                "agenda": agenda_limpia,
+                "count": len(agenda_limpia),
+                "score": respuesta.get("data", {}).get("score", 0)
+            })
+        except queue.Empty:
+            raise TimeoutError("Agente optimizador no respondió a tiempo")
+            
     except TimeoutError as e:
-        return jsonify({"error": "Agente optimizador no respondió a tiempo"}), 504
+        logger.error(f"Timeout en /agenda: {str(e)}")
+        return jsonify({"error": str(e)}), 504
     except Exception as e:
-        logger.error(f"Error en /agenda: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Error en /agenda: {str(e)}", exc_info=True)
+        return jsonify({"error": "Error interno del servidor"}), 500
+   

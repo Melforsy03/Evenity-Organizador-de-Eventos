@@ -27,6 +27,9 @@ from dateutil import tz
 from geopy.distance import geodesic
 from collections import defaultdict
 import sys
+from math import radians, sin, cos, sqrt, atan2
+
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from scraping.crawler import EventScraper
 from core.procesamiento import EventProcessor
@@ -53,7 +56,17 @@ def load_events_from_folder(folder_path):
                     print(f"Error leyendo {filename}: {e}")
     print(f"Cargados {len(events)} eventos desde {folder_path}")
     return events
+def haversine(coord1, coord2):
+    # Coordenadas: (lat, lon)
+    lat1, lon1 = coord1
+    lat2, lon2 = coord2
 
+    R = 6371  # Radio de la Tierra en km
+    dlat = radians(lat2 - lat1)
+    dlon = radians(lon2 - lon1)
+    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    return R * c  # distancia en km
 class EventEmbedder:
     # Variables de clase (compartidas por todas las instancias)
     _instance = None
@@ -130,7 +143,40 @@ class EventEmbedder:
         
         logger.info(f"✅ Embeddings generados. Dimensión: {EventEmbedder._embeddings.shape}")
         return EventEmbedder._embeddings
+    def normalize_embeddings(self, embeddings):
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        norms[norms == 0] = 1
+        return embeddings / norms
+    
+    def cargar_embeddings(self, archivo: str):
+        with open(archivo, "rb") as f:
+            data = pickle.load(f)
+            self.events= data["eventos"]
+            self.embeddings = np.array(data["embeddings"]).astype("float32")
+            self.embeddings = self.normalize_embeddings(self.embeddings)
 
+            dim = self.embeddings.shape[1]
+            self.index = faiss.IndexHNSWFlat(dim, 32)
+            self.index.hnsw.efSearch = 64
+            self.index.add(self.embeddings)
+
+        print(f"✅ {len(self.events)} eventos cargados y embebidos.")
+        
+    def cargar_shards(self, carpeta: str):
+        for archivo in os.listdir(carpeta):
+            if archivo.endswith(".pkl"):
+                ciudad = archivo[:-4]
+                with open(os.path.join(carpeta, archivo), "rb") as f:
+                    data = pickle.load(f)
+                    emb = np.array(data["embeddings"]).astype("float32")
+                    emb = self.normalize_embeddings(emb)
+
+                    idx = faiss.IndexFlatIP(emb.shape[1])
+                    idx.add(emb)
+                    self.shards[ciudad] = (idx, data["eventos"])
+
+        print(f"✅ {len(self.shards)} shards de ciudades cargados.")
+        
     def build_index(self, embeddings: np.ndarray, index_type: str = "IVFFlat"):
         """Construye el índice FAISS para búsqueda eficiente"""
         if embeddings is None:
@@ -154,40 +200,61 @@ class EventEmbedder:
         EventEmbedder._index = self.index
         logger.info(f"✅ Índice construido. Total embeddings: {self.index.ntotal}")
 
-    def filtered_search(self, query: str, city: str = None, user_coords: tuple = None, max_km: int = None, k: int = 5):
-        """Búsqueda con filtros geográficos"""
-        if EventEmbedder._embeddings is None:
-            raise ValueError("Primero debe generar embeddings")
-            
-        # Filtrado inicial
-        candidates = self.events
-        
-        if city:
-            candidates = [e for e in candidates if e.get("spatial_info", {}).get("area", {}).get("city") == city]
-        
-        if user_coords and max_km:
-            candidates = [e for e in candidates if self._is_event_near(e, user_coords, max_km)]
-        
-        if not candidates:
-            return [], []
-        
-        # Búsqueda semántica
-        candidate_indices = [self.events.index(e) for e in candidates]
-        candidate_embeddings = EventEmbedder._embeddings[candidate_indices]
-        
-        temp_index = faiss.IndexFlatIP(candidate_embeddings.shape[1])
-        temp_index.add(candidate_embeddings)
-        
-        query_vec = self.model.encode([query], convert_to_numpy=True)
-        query_vec = query_vec / np.linalg.norm(query_vec)
-        
-        distances, indices = temp_index.search(query_vec, k)
-        
-        results = [candidates[i] for i in indices[0]]
-        scores = distances[0].tolist()
-        
-        return results, scores
+    def filtered_search(self, query: str, city: str = None, user_coords: tuple = None,
+                    max_km: int = None, k: int = 100, page: int = 1, limit: int = 10) -> list:
+            """
+            Realiza una búsqueda semántica con filtrado opcional por ciudad y distancia.
+            Retorna eventos ordenados por score y fecha, paginados.
+            """
+            if self.index is None or not self.events:
+                return []
 
+            # Codificar la query y normalizar
+            q_vec = self.model.encode([query], convert_to_numpy=True).astype("float32")
+            q_vec /= np.linalg.norm(q_vec, axis=1, keepdims=True)
+
+            # Buscar los k más similares
+            D, I = self.index.search(q_vec, k)
+            indices = I[0]
+            scores = D[0]
+
+            resultados = []
+            for j, i in enumerate(indices):
+                if i < 0 or i >= len(self.events):
+                    continue
+
+                evento = self.events[i]
+                ciudad_ev = evento.get("spatial_info", {}).get("area", {}).get("city", "").lower()
+
+                if city and city.lower() not in ciudad_ev:
+                    continue
+
+                if user_coords and evento.get("coords"):
+                    dist = haversine(user_coords, evento["coords"])
+                    if max_km and dist > max_km:
+                        continue
+
+                evento = dict(evento)  # crear copia si se va a modificar
+                evento["score"] = float(scores[j])
+                resultados.append(evento)
+
+            # === Ordenar por score (desc) y luego por fecha (asc)
+            def extraer_fecha(ev):
+                fecha_str = ev.get("temporal_info", {}).get("start")
+                try:
+                    return datetime.fromisoformat(fecha_str)
+                except:
+                    return datetime.max
+
+            resultados.sort(
+                key=lambda ev: (-ev.get("score", 0), extraer_fecha(ev))
+            )
+
+            # === Paginación
+            inicio = (page - 1) * limit
+            fin = inicio + limit
+            return resultados[inicio:fin]
+        
     def _is_event_near(self, event: Dict[str, Any], user_coords: tuple, max_km: float) -> bool:
         """Verifica si un evento está cerca de las coordenadas del usuario"""
         loc = event.get("spatial_info", {}).get("venue", {}).get("location", {})
@@ -332,18 +399,23 @@ class EventEmbedder:
         print(f"✅ Cargados {len(embedder.events)} eventos desde {input_dir}")
         return embedder
 
-    def search(self, query, shard_key, k=5):
+    def search(self, query: str, shard_key: str, k: int = 30):
         if shard_key not in self.shards:
             return [], []
 
         index, eventos = self.shards[shard_key]
         q_vec = self.model.encode([query], convert_to_numpy=True)
-        q_vec /= np.linalg.norm(q_vec)
+        q_vec = self.normalize_embeddings(q_vec.astype("float32"))
 
         D, I = index.search(q_vec, k)
-        resultados = [eventos[i] for i in I[0]]
-        scores = D[0].tolist()
-        return resultados, scores
+        indices = I[0]
+        scores = D[0]
+
+        resultados = [
+            {**eventos[i], "score": float(scores[j])}
+            for j, i in enumerate(indices) if i >= 0 and i < len(eventos)
+        ]
+        return resultados, scores.tolist()
 
     def hybrid_search(self, query: str, keywords: List[str] = None, k: int = 5):
         semantic_results, scores = self.search(query, k*2)
@@ -407,15 +479,20 @@ class EventEmbedder:
         event_date = event.get("temporal_info", {}).get("start")
         if not event_date:
             return False
-        
-        try:
-            event_dt = datetime.fromisoformat(event_date.replace("Z", "+00:00"))
-            start_dt = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
-            end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
-            return start_dt <= event_dt <= end_dt
-        except:
-            return False
 
+        try:
+            def make_aware(dt):
+                dt_obj = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+                return dt_obj if dt_obj.tzinfo else dt_obj.replace(tzinfo=tz.UTC)
+
+            event_dt = make_aware(event_date)
+            start_dt = make_aware(start_date)
+            end_dt = make_aware(end_date)
+
+            return start_dt <= event_dt <= end_dt
+        except Exception as e:
+            print(f"[Error fecha] {e}")
+            return False
     def enriquecer_resultados_con_grafo(self, eventos: List[Dict[str, Any]], G, query: str) -> List[Dict[str, Any]]:
         palabras_clave = query.lower().split()
         eventos_enriquecidos = []
@@ -489,6 +566,29 @@ def run_embedding():
     embedder.save(output_dir="embedding_data")
     
     return embedder
+def ordenar_y_paginar(eventos: list, page: int = 1, limit: int = 10) -> list:
+    """
+    Ordena una lista de eventos primero por score (descendente),
+    luego por fecha de inicio (ascendente), y aplica paginación.
+    """
+
+    def extraer_fecha(ev):
+        fecha_str = ev.get("temporal_info", {}).get("start")
+        try:
+            return datetime.fromisoformat(fecha_str)
+        except:
+            return datetime.max  # Coloca eventos sin fecha al final
+
+    # Ordenar primero por mayor score, luego por fecha más próxima
+    eventos_ordenados = sorted(
+        eventos,
+        key=lambda ev: (-ev.get("score", 0), extraer_fecha(ev))
+    )
+
+    # Aplicar paginación
+    inicio = (page - 1) * limit
+    fin = inicio + limit
+    return eventos_ordenados[inicio:fin]
 
 def fallback_api_call(query: str, start_date: str = None, end_date: str = None,
                       ciudad: str = None, categoria: str = None, source="seatgeek"):

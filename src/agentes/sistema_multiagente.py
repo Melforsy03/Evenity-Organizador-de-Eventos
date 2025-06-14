@@ -22,19 +22,22 @@ import subprocess
 import json
 import os
 import sys
+from datetime import date
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import networkx as nx
-from core.embedding import fallback_api_call, EventEmbedder
+from core.embedding import fallback_api_call, run_embedding, load_events_from_folder, ordenar_y_paginar, EventEmbedder
 from scraping.crawler import EventScraper
 from core.procesamiento import procesar_json,EventProcessor
 from scraping.actualizador_dinamico import actualizar_eventos_y_embeddings
 from core.grafo_conocimiento import get_knowledge_graph 
-from core.embedding import run_embedding , EventEmbedder
 from core.optimizador import obtener_eventos_optimales
-from core.embedding import load_events_from_folder, EventEmbedder
 from api.lanzar_api import iniciar_api  
+from api.servidor_base import response_queues_lock , response_queues
 from api.contexto_global import registrar_bandeja , obtener_bandeja
 from datetime import datetime
+from copy import deepcopy
+import uuid
+
 # === Mensaje para comunicación entre agentes ===
 class Mensaje:
     def __init__(self, emisor, receptor, contenido):
@@ -211,67 +214,87 @@ class AgenteEmbedding(AgenteBase):
                 print(f"[Embedding] ❌ Error: {e}")
 # === Agente 6: Optimizador ===
 class AgenteOptimizador(AgenteBase):
-    def run_once(self, intento=1):
-        print(f"🎯 [Optimizador] Generando agenda óptima (intento {intento})...")
-        try:
-            embedder = EventEmbedder._instance
-            eventos = embedder.events[:50]
-            preferencias = {"location": None, "categories": [], "available_dates": None}
-            scores = {ev.get("basic_info", {}).get("title", ""): 1.0 for ev in eventos}
-            print(f"[Optimizador] Recibido mensaje de API con preferencias: {preferencias}")
-
-            agenda, score, _ = obtener_eventos_optimales(eventos, preferencias, cantidad=5, scores_grafo=scores)
-            print(f"✅ [Optimizador] Agenda generada (score: {score:.2f})")
-            for i, ev in enumerate(agenda, 1):
-                print(f"{i}. {ev.get('basic_info', {}).get('title', 'Sin título')}")
-        except Exception as e:
-            print(f"❌ [Optimizador] Error al generar agenda: {e}")
-            if intento < 3:
-                time.sleep(5 * intento)
-                self.run_once(intento + 1)
-            else:
-                print("🛑 [Optimizador] Fallo permanente tras 3 intentos.")
+    def __init__(self, nombre, bandeja_entrada):
+        super().__init__(nombre, bandeja_entrada)
+        self.grafo = None
+        
 
     def ejecutar(self):
+        print("🎯 [Optimizador] Agente activo y escuchando...")
         while True:
             try:
                 msg = self.bandeja_entrada.get()
-
-                # ✅ 1. Si el grafo está listo, generar agenda por cuenta propia (modo automático)
+                
+                # 1. Si el grafo está listo
                 if msg.receptor == self.nombre and msg.contenido == "grafo_listo":
                     self.run_once()
-
-                # ✅ 2. Si viene una petición desde la API con preferencias
-                if msg.receptor == self.nombre and isinstance(msg.contenido, dict) and "preferencias" in msg.contenido:
+                
+                # 2. Si viene petición desde API
+                if (msg.receptor == self.nombre and 
+                    isinstance(msg.contenido, dict) and 
+                    "preferencias" in msg.contenido):
+                    
                     preferencias = msg.contenido["preferencias"]
                     respuesta_key = msg.contenido["respuesta"]
-
-                    embedder = EventEmbedder._instance
-                    eventos = embedder.events
-                    scores = {ev.get("basic_info", {}).get("title", ""): 1.0 for ev in eventos}
-
+                    
                     try:
-                        from core.optimizador import obtener_eventos_optimales
+                        embedder = EventEmbedder._instance
+                        eventos = embedder.events
+                        scores = {ev.get("basic_info", {}).get("title", ""): 1.0 for ev in eventos}
+                        
                         agenda, score, _ = obtener_eventos_optimales(
-                            eventos, preferencias, cantidad=5, scores_grafo=scores
+                            eventos, 
+                            preferencias, 
+                            cantidad=5, 
+                            scores_grafo=scores
                         )
-
-                        self.enviar("api", {
-                            "key": respuesta_key,
-                            "data": {
-                                "agenda": agenda,
-                                "score": score
-                            }
-                        })
+                        
+                        # Enviar por ambos canales
+                        self.enviar_respuesta_api(respuesta_key, agenda, score)
+                        
                     except Exception as e:
-                        self.enviar("api", {
-                            "key": respuesta_key,
-                            "error": str(e)
-                        })
-
+                        print(f"❌ [Optimizador] Error: {e}")
+                        self.enviar_error_api(respuesta_key, str(e))
+                        
             except Exception as e:
-                print(f"[Optimizador] ❌ Error: {e}")
+                print(f"🔥 [Optimizador] Error crítico: {e}")
+                time.sleep(1)
 
+    def enviar_respuesta_api(self, clave_respuesta, agenda, score):
+        """Envía respuesta por todos los canales disponibles"""
+        respuesta = {
+            "key": clave_respuesta,
+            "data": {
+                "agenda": agenda,
+                "score": score
+            }
+        }
+        
+        # 1. Sistema de colas dedicadas
+        try:
+            with response_queues_lock:
+                if clave_respuesta in response_queues:
+                    response_queues[clave_respuesta].put(respuesta)
+                    print("✅ [Optimizador] Respuesta enviada a cola dedicada")
+        except Exception as e:
+            print(f"⚠️ [Optimizador] Error en cola dedicada: {e}")
+        
+        # 2. Sistema tradicional de mensajes
+        try:
+            bandeja_api = obtener_bandeja("api")
+            if bandeja_api:
+                bandeja_api.put(Mensaje(
+                    emisor=self.nombre,
+                    receptor="api",
+                    contenido=respuesta
+                ))
+                print("✅ [Optimizador] Respuesta enviada a bandeja API")
+        except Exception as e:
+            print(f"⚠️ [Optimizador] Error enviando a bandeja API: {e}")
+
+    def enviar_error_api(self, clave_respuesta, error):
+        """Envía mensaje de error"""
+        self.enviar_respuesta_api(clave_respuesta, [], error)
 class AgenteGapFallback(AgenteBase):
     def ejecutar(self):
         print("📡 [GapFallback] Agente activo y escuchando...")
@@ -312,12 +335,13 @@ class AgenteGapFallback(AgenteBase):
                     end_date=fecha_fin,
                     source="ticketmaster"  # puedes cambiar esto dinámicamente
                 )
+                eventos_ordenados = ordenar_y_paginar(eventos, page=1, limit=10)
 
                 print(f"🎯 [GapFallback] Recuperados {len(eventos)} eventos")
 
                 self.enviar("api", {
                     "key": respuesta_clave,
-                    "data": eventos,
+                    "data": eventos_ordenados,
                     "mensaje": f"Eventos recuperados vía fallback: {len(eventos)}"
                 })
                 if eventos:
@@ -333,106 +357,176 @@ class AgenteGapFallback(AgenteBase):
                 })
                 
 class AgenteBusquedaInteractiva(AgenteBase):
+    def __init__(self, nombre, bandeja_entrada):
+        super().__init__(nombre, bandeja_entrada)
+        self.embedder = None
+        self.last_embedder_check = 0
+        
+
+    def get_embedder(self):
+        """Obtiene el embedder con cache de 5 segundos"""
+        current_time = time.time()
+        if self.embedder is None or (current_time - self.last_embedder_check) > 5:
+            self.embedder = EventEmbedder.get_instance()
+            self.last_embedder_check = current_time
+        return self.embedder
+
     def ejecutar(self):
         print("📡 [BusquedaInteractiva] Agente activo y escuchando...")
         while True:
             try:
                 msg = self.bandeja_entrada.get()
                 if msg.receptor != self.nombre:
-                    self.bandeja_entrada.put(msg)  # volver a poner si no es nuestro
+                    self.bandeja_entrada.put(msg)  # Reenviar si no es para nosotros
                     continue
+
                 if not isinstance(msg.contenido, dict):
                     print(f"⚠️ [BusquedaInteractiva] Mensaje inválido ignorado: {msg}")
                     continue
 
-
+                # Extraer parámetros de búsqueda
                 query = msg.contenido.get("query", "").strip()
                 ciudad = msg.contenido.get("ciudad")
                 categoria = msg.contenido.get("categoria")
                 fecha_inicio = msg.contenido.get("fecha_inicio")
                 fecha_fin = msg.contenido.get("fecha_fin")
-                clave_respuesta = msg.contenido.get("respuesta", "res_busqueda")
+                clave_respuesta = msg.contenido.get("respuesta", f"res_busqueda_{uuid.uuid4().hex}")
 
-                print(f"🔍 [BusquedaInteractiva] Recibida query: '{query}'")
+                print(f"🔍 [BusquedaInteractiva] Nueva búsqueda - Query: '{query}' | Ciudad: {ciudad} | Categoría: {categoria}")
 
+                # Validación básica
                 if not query:
-                    self.enviar("api", {
-                        "key": clave_respuesta,
-                        "data": [],
-                        "mensaje": "Consulta vacía"
-                    })
+                    self.enviar_respuesta_error(clave_respuesta, "La consulta no puede estar vacía")
                     continue
 
-                embedder = EventEmbedder._instance
+                # Obtener instancia del embedder
+                try:
+                    embedder = self.get_embedder()
+                    if embedder is None:
+                        raise RuntimeError("Embedder no disponible")
+                except Exception as e:
+                    self.enviar_respuesta_error(clave_respuesta, f"Error en el sistema de búsqueda: {str(e)}")
+                    continue
 
-                # === Mejora 1: usar shards si hay ciudad
-                if ciudad and ciudad in embedder.shards:
-                    resultados, _ = embedder.search(query, shard_key=ciudad, k=20)
-                else:
-                    resultados = embedder.filtered_search(query, top_k=20)
-
-                # === Mejora 2: convertir fechas solo una vez
-                fecha_inicio_dt = datetime.fromisoformat(fecha_inicio).date() if fecha_inicio else None
-                fecha_fin_dt = datetime.fromisoformat(fecha_fin).date() if fecha_fin else None
-
-                # === Mejora 3: aplicar filtros
-                eventos_filtrados = []
-                for ev in resultados:
-                    ciudad_ev = ev.get("spatial_info", {}).get("area", {}).get("city")
-                    categoria_ev = ev.get("classification", {}).get("primary_category")
-                    fecha_ev_str = ev.get("temporal_info", {}).get("start")
-
-                    if ciudad and ciudad != ciudad_ev:
-                        continue
-                    if categoria and categoria != categoria_ev:
-                        continue
-                    if fecha_ev_str:
-                        try:
-                            fecha_ev = datetime.fromisoformat(fecha_ev_str).date()
-                            if fecha_inicio_dt and fecha_ev < fecha_inicio_dt:
-                                continue
-                            if fecha_fin_dt and fecha_ev > fecha_fin_dt:
-                                continue
-                        except:
-                            continue
-
-                    eventos_filtrados.append(ev)
-
-                print(f"📊 [BusquedaInteractiva] Eventos tras filtro: {len(eventos_filtrados)}")
-
-                # === Mejora 4: responder siempre, incluso con pocos eventos
-                self.enviar("api", {
-                    "key": clave_respuesta,
-                    "data": eventos_filtrados,
-                    "mensaje": f"Se encontraron {len(eventos_filtrados)} evento(s) tras búsqueda principal"
-                })
-
-                # Si son menos de 2, disparar fallback
-                if len(eventos_filtrados) < 2:
-                    print("⚠️ [BusquedaInteractiva] Disparando fallback por baja cobertura")
-
-                    fallback_msg = {
-                        "query": query,
-                        "ciudad": ciudad,
-                        "categoria": categoria,
-                        "fecha_inicio": fecha_inicio,
-                        "fecha_fin": fecha_fin,
-                        "respuesta": clave_respuesta
-                    }
-                    bandeja_fallback = obtener_bandeja("gapfallback")
-                    if bandeja_fallback:
-                        bandeja_fallback.put(Mensaje(
-                            emisor=self.nombre,
-                            receptor="gapfallback",
-                            contenido=fallback_msg
-                        ))
+                # Realizar la búsqueda
+                try:
+                    if ciudad and ciudad in embedder.shards:
+                        resultados, _ = embedder.search(
+                            query=query,
+                            shard_key=ciudad,
+                            k=50
+                        )
                     else:
-                        print("❌ No se pudo obtener la bandeja para gapfallback")
+                        resultados = embedder.filtered_search(
+                            query=query,
+                            city=ciudad,
+                            category=categoria,
+                            start_date=fecha_inicio,
+                            end_date=fecha_fin,
+                            k=100
+                        )
+
+                    # Procesar resultados
+                    eventos_finales = ordenar_y_paginar(resultados, page=1, limit=30)
+                    eventos_finales = limpiar_eventos(eventos_finales)
+                    total_resultados = len(eventos_finales)
+
+                    print(f"📊 [BusquedaInteractiva] Resultados encontrados: {total_resultados}")
+
+                    # Enviar respuesta exitosa
+                    self.enviar_respuesta_exitosa(
+                        clave_respuesta,
+                        eventos_finales,
+                        f"Se encontraron {total_resultados} evento(s)"
+                    )
+
+                    # Disparar fallback si hay pocos resultados
+                    if total_resultados < 3:
+                        self.disparar_fallback(
+                            query=query,
+                            ciudad=ciudad,
+                            categoria=categoria,
+                            fecha_inicio=fecha_inicio,
+                            fecha_fin=fecha_fin,
+                            clave_respuesta=clave_respuesta
+                        )
+
+                except Exception as e:
+                    print(f"❌ [BusquedaInteractiva] Error en búsqueda: {str(e)}")
+                    self.enviar_respuesta_error(clave_respuesta, f"Error al procesar la búsqueda: {str(e)}")
 
             except Exception as e:
-                print(f"❌ [BusquedaInteractiva] Error: {e}")
+                print(f"🔥 [BusquedaInteractiva] Error crítico en ciclo principal: {str(e)}")
+                time.sleep(1)  # Prevenir bucles rápidos de error
 
-def arranque_secuencial(bandeja_api):
+    def enviar_respuesta_exitosa(self, clave_respuesta, datos, mensaje=""):
+        """Envía una respuesta exitosa por todos los canales disponibles"""
+        respuesta = {
+            "key": clave_respuesta,
+            "data": datos,
+            "mensaje": mensaje,
+            "status": "success"
+        }
+
+        # 1. Enviar a través del sistema de colas dedicado (nuevo)
+        try:
+            with response_queues_lock:
+                if clave_respuesta in response_queues:
+                    response_queues[clave_respuesta].put(respuesta)
+                    print(f"✅ [BusquedaInteractiva] Respuesta enviada a cola dedicada")
+        except Exception as e:
+            print(f"⚠️ [BusquedaInteractiva] Error enviando a cola dedicada: {str(e)}")
+
+        # 2. Enviar a través del sistema tradicional de mensajes (backup)
+        try:
+            bandeja_api = obtener_bandeja("api")
+            if bandeja_api:
+                bandeja_api.put(Mensaje(
+                    emisor=self.nombre,
+                    receptor="api",
+                    contenido=respuesta
+                ))
+                print(f"✅ [BusquedaInteractiva] Respuesta enviada a bandeja API tradicional")
+        except Exception as e:
+            print(f"⚠️ [BusquedaInteractiva] Error enviando a bandeja API: {str(e)}")
+
+    def enviar_respuesta_error(self, clave_respuesta, mensaje_error):
+        """Envía un mensaje de error"""
+        print(f"⚠️ [BusquedaInteractiva] Enviando error: {mensaje_error}")
+        self.enviar_respuesta_exitosa(
+            clave_respuesta,
+            [],
+            mensaje_error
+        )
+
+    def disparar_fallback(self, query, ciudad, categoria, fecha_inicio, fecha_fin, clave_respuesta):
+        """Dispara el mecanismo de fallback para obtener más resultados"""
+        print("⚠️ [BusquedaInteractiva] Activando fallback por baja cobertura")
+        
+        fallback_msg = {
+            "query": query,
+            "ciudad": ciudad,
+            "categoria": categoria,
+            "fecha_inicio": fecha_inicio,
+            "fecha_fin": fecha_fin,
+            "respuesta": clave_respuesta
+        }
+
+        try:
+            bandeja_fallback = obtener_bandeja("gapfallback")
+            if bandeja_fallback:
+                bandeja_fallback.put(Mensaje(
+                    emisor=self.nombre,
+                    receptor="gapfallback",
+                    contenido=fallback_msg
+                ))
+                print(f"✅ [BusquedaInteractiva] Mensaje de fallback enviado")
+            else:
+                print("❌ [BusquedaInteractiva] No se pudo obtener bandeja para fallback")
+        except Exception as e:
+            print(f"❌ [BusquedaInteractiva] Error al disparar fallback: {str(e)}")
+            
+def arranque_secuencial():
     from core.embedding import load_events_from_folder
 
     eventos_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../eventos_mejorados"))
@@ -536,7 +630,21 @@ def actualizar_visual(bandeja):
             ))
         except Exception as e:
             print(f"⚠️ Error actualizando frontend: {e}")
-
+def limpiar_eventos(lista):
+    nuevos = []
+    for ev in lista:
+        try:
+            nuevo = deepcopy(ev)
+            # Eliminar campos problemáticos
+            for key in list(nuevo.keys()):
+                if key.startswith('__'):  # Eliminar todos los campos internos
+                    del nuevo[key]
+                elif isinstance(nuevo[key], (datetime, date)):
+                    nuevo[key] = str(nuevo[key])  # Convertir fechas a string
+            nuevos.append(nuevo)
+        except Exception as e:
+            print(f"⚠️ Error limpiando evento: {e}")
+    return nuevos
 # Reemplazar la parte del lanzamiento de Streamlit con:
 def verificar_api_lista():
     import requests
@@ -558,7 +666,7 @@ if __name__ == "__main__":
     registrar_bandeja("api", bandeja)
     # 2. Ejecutar arranque secuencial PRIMERO
     print("⚙️ Ejecutando arranque secuencial...")
-    arranque_secuencial(bandeja)
+    arranque_secuencial()
 
     # 3. Iniciar API después de tener embeddings
     print("🌐 Iniciando servidor API...")
