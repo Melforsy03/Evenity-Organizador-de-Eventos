@@ -1,12 +1,12 @@
 """
 Módulo de optimización de agendas (optimizador.py)
 
-Define funciones para generar una agenda óptima de eventos mediante la técnica de búsqueda
-local tipo hill climbing, evaluando cada solución según múltiples criterios ponderados.
+Define funciones para generar una agenda óptima de eventos mediante la técnica de 
+Simulated Annealing, evaluando cada solución según múltiples criterios ponderados.
 
 Funciones principales:
 - `evaluar_solucion_mejorada()`
-- `hill_climbing_mejorado()`
+- `simulated_annealing()`
 - `obtener_eventos_optimales()`
 
 Se consideran aspectos como categoría, ciudad, fechas, duración, traslado entre eventos,
@@ -152,20 +152,28 @@ def tiempo_traslado(evento1, evento2, velocidad_kmh=30):
     tiempo_minutos = tiempo_horas * 60
     return tiempo_minutos
 
-def hill_climbing_mejorado(pool: List[Dict[str, Any]],
-                           preferencias: Dict[str, Any],
-                           n: int = 5,
-                           max_iter: int = 1000,
-                           scores_grafo: Optional[Dict[str, float]] = None) -> Tuple[List[Dict[str, Any]], float, list]:
+def simulated_annealing(pool: List[Dict[str, Any]],
+                       preferencias: Dict[str, Any],
+                       n: int = 5,
+                       max_iter: int = 1000,
+                       scores_grafo: Optional[Dict[str, float]] = None) -> Tuple[List[Dict[str, Any]], float, list]:
+    # Parámetros de Simulated Annealing
+    temperatura_inicial = 100.0
+    temperatura_final = 0.1
+    enfriamiento = (temperatura_inicial - temperatura_final) / max_iter
+    
     current = generar_solucion_inicial(pool, n)
     best = current.copy()
-    best_score = evaluar_solucion_mejorada(current, preferencias, scores_grafo)
+    current_score = evaluar_solucion_mejorada(current, preferencias, scores_grafo)
+    best_score = current_score
     scores_trace = [best_score]
-
-    for _ in range(max_iter):
-        vecino = best.copy()
+    temperatura = temperatura_inicial
+    
+    for iteracion in range(max_iter):
+        # Generar vecino válido
+        vecino = current.copy()
         idx = random.randint(0, len(vecino) - 1)
-
+        
         intentos = 0
         while intentos < 100:
             candidato = random.choice(pool)
@@ -176,15 +184,24 @@ def hill_climbing_mejorado(pool: List[Dict[str, Any]],
             intentos += 1
         else:
             scores_trace.append(best_score)
+            temperatura -= enfriamiento
             continue
-
-        score_vecino = evaluar_solucion_mejorada(vecino, preferencias, scores_grafo)
-        if score_vecino > best_score:
-            best = vecino.copy()
-            best_score = score_vecino
-
+        
+        # Evaluar vecino
+        vecino_score = evaluar_solucion_mejorada(vecino, preferencias, scores_grafo)
+        delta = vecino_score - current_score
+        
+        # Criterio de aceptación
+        if delta > 0 or (temperatura > 0 and random.random() < math.exp(delta / temperatura)):
+            current = vecino.copy()
+            current_score = vecino_score
+            if vecino_score > best_score:
+                best = vecino.copy()
+                best_score = vecino_score
+        
         scores_trace.append(best_score)
-
+        temperatura -= enfriamiento
+    
     return best, best_score, scores_trace
 
 def obtener_eventos_optimales(eventos: List[Dict[str, Any]], 
@@ -194,4 +211,4 @@ def obtener_eventos_optimales(eventos: List[Dict[str, Any]],
                             scores_grafo: Optional[Dict[str, float]] = None) -> Tuple[List[Dict[str, Any]], float]:
     if len(eventos) < cantidad:
         raise ValueError(f"No hay suficientes eventos para optimizar (necesarios: {cantidad}, disponibles: {len(eventos)})")
-    return hill_climbing_mejorado(eventos, preferencias, n=cantidad, max_iter=max_iter, scores_grafo=scores_grafo)
+    return simulated_annealing(eventos, preferencias, n=cantidad, max_iter=max_iter, scores_grafo=scores_grafo)

@@ -13,7 +13,6 @@ Define:
 
 Este módulo implementa el patrón de diseño productor-consumidor entre hilos.
 """
-
 from queue import Queue
 from threading import Thread
 from abc import ABC, abstractmethod
@@ -57,6 +56,52 @@ class AgenteBase(ABC):
     @abstractmethod
     def ejecutar(self):
         pass
+class AgenteCoordinador(AgenteBase):
+    def __init__(self, nombre, bandeja_entrada):
+        super().__init__(nombre, bandeja_entrada)
+        self.estado = {
+            "scraping": False,
+            "procesamiento": False,
+            "actualizacion": False,
+            "grafo": False,
+            "agenda_generada": False
+        }
+
+    def ejecutar(self):
+        print("🧠 [Coordinador] Escuchando mensajes de coordinación...")
+        while True:
+            try:
+                msg = self.bandeja_entrada.get()
+                if msg.receptor != self.nombre:
+                    continue
+
+                contenido = msg.contenido
+
+                if contenido == "scraping_terminado":
+                    self.estado["scraping"] = True
+                    self.enviar("procesador", "scraping_terminado")
+
+                elif contenido == "eventos_procesados":
+                    self.estado["procesamiento"] = True
+                    self.enviar("actualizador", "eventos_procesados")
+
+                elif contenido == "embeddings_actualizados":
+                    self.estado["actualizacion"] = True
+                    self.enviar("grafo", "embeddings_actualizados")
+
+                elif contenido == "grafo_listo":
+                    self.estado["grafo"] = True
+                    self.enviar("optimizador", "grafo_listo")
+
+                elif contenido == "resetear":
+                    self.resetear_estado()
+
+            except Exception as e:
+                print(f"❌ [Coordinador] Error en ciclo principal: {e}")
+
+    def resetear_estado(self):
+        for key in self.estado:
+            self.estado[key] = False
 
 # === Agente 1: Scraper ===
 class AgenteScraper(AgenteBase):
@@ -74,6 +119,8 @@ class AgenteScraper(AgenteBase):
             scraper.run_all_scrapers()
             print("✅ [Scraper] Scraping completado exitosamente.")
             self.enviar("procesador", "scraping_terminado")
+            self.enviar("coordinador", "scraping_terminado")
+
         except Exception as e:
             print(f"❌ [Scraper] Error durante scraping: {e}")
             if intento < 3:
@@ -106,6 +153,8 @@ class AgenteProcesador(AgenteBase):
             procesar_json()
             print("✅ [Procesador] Procesamiento completo.")
             self.enviar("actualizador", "eventos_procesados")
+            self.enviar("coordinador", "eventos_procesados")
+
     def ejecutar(self):
         while True:
             try:
@@ -136,6 +185,7 @@ class AgenteActualizador(AgenteBase):
             actualizar_eventos_y_embeddings()
             print("✅ [Actualizador] Actualización terminada.")
             self.enviar("grafo", "embeddings_actualizados")
+            self.enviar("coordinador", "embeddings_actualizados")
         except Exception as e:
             print(f"❌ [Actualizador] Error al actualizar: {e}")
             if intento < 3:
@@ -186,6 +236,8 @@ class AgenteGrafo(AgenteBase):
                     return
 
         self.enviar("optimizador", "grafo_listo")
+        self.enviar("coordinador", "grafo_listo")
+
         self.enviar("busqueda_interactiva", {"grafo": self.grafo})
 
     def ejecutar(self):
@@ -202,6 +254,7 @@ class AgenteEmbedding(AgenteBase):
         print("💾 [Embedding] Generando embeddings...")
         run_embedding()
         print("✅ [Embedding] Embeddings listos.")
+        self.enviar("coordinador", "embeddings_actualizados")
 
     def ejecutar(self):
         while True:
@@ -367,6 +420,7 @@ class AgenteGapFallback(AgenteBase):
                     f"fallback_error_{uuid.uuid4().hex}",
                     f"Error en fallback: {str(e)}"
                 )
+       
 
     def normalizar_fecha(self, fecha):
         """Normaliza fechas de diferentes formatos a datetime.date"""
@@ -412,6 +466,7 @@ class AgenteGapFallback(AgenteBase):
                 print(f"✅ [GapFallback] Respuesta enviada a bandeja API tradicional")
         except Exception as e:
             print(f"⚠️ [GapFallback] Error enviando a bandeja API: {e}")
+   
 
     def enviar_respuesta_error(self, clave_respuesta, mensaje_error):
         """Envía mensaje de error"""
@@ -524,6 +579,7 @@ class AgenteBusquedaInteractiva(AgenteBase):
             except Exception as e:
                 print(f"🔥 [BusquedaInteractiva] Error crítico en ciclo principal: {str(e)}")
                 time.sleep(1)
+            self.enviar("coordinador", "busqueda_exitosa")
 
     def enviar_respuesta_exitosa(self, clave_respuesta, datos, mensaje=""):
         """Envía una respuesta exitosa por todos los canales disponibles"""
@@ -630,6 +686,7 @@ def arranque_secuencial():
 # === Función para iniciar agentes en threads (escuchando mensajes) ===
 def iniciar_threads():
     agentes = [
+        AgenteCoordinador("coordinador", Queue()),
         AgenteScraper("scraper", Queue()),
         AgenteProcesador("procesador", Queue()),
         AgenteActualizador("actualizador", Queue()),
@@ -729,6 +786,8 @@ if __name__ == "__main__":
 
    # 1. Inicialización del sistema
     bandeja = Queue()
+    registrar_bandeja("coordinador", bandeja)
+
     registrar_bandeja("api", bandeja)
     # 2. Ejecutar arranque secuencial PRIMERO
     print("⚙️ Ejecutando arranque secuencial...")
