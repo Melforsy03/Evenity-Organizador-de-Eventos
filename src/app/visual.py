@@ -3,16 +3,27 @@ import requests
 from datetime import date
 import uuid
 
-# Configuración inicial
 st.set_page_config(page_title="Evenity", layout="wide")
 st.title("🔍 Explorador de Eventos")
 
-# Estado inicial
 if 'clave_respuesta' not in st.session_state:
     st.session_state.clave_respuesta = f"res_busqueda_{uuid.uuid4().hex}"
 
 if 'pagina_actual' not in st.session_state:
     st.session_state.pagina_actual = 0
+
+if 'fecha_inicio' not in st.session_state:
+    st.session_state.fecha_inicio = date.today()
+
+if 'fecha_fin' not in st.session_state:
+    st.session_state.fecha_fin = date.today()
+
+if 'eventos_encontrados' not in st.session_state:
+    st.session_state.eventos_encontrados = []
+
+if 'agenda_generada' not in st.session_state:
+    st.session_state.agenda_generada = []
+    st.session_state.agenda_score = 0
 
 @st.cache_data(ttl=300)
 def cargar_datos():
@@ -28,7 +39,6 @@ def mostrar_evento(ev):
     with st.container():
         titulo = ev.get("basic_info", {}).get("title", "Sin título")
         descripcion = ev.get("basic_info", {}).get("description", "Sin descripción")
-
         st.markdown(f"## 🎫 {titulo}")
 
         imagenes = ev.get("external_references", {}).get("images", [])
@@ -88,9 +98,7 @@ def mostrar_evento(ev):
 
         st.markdown("---")
 
-# === CARGA INICIAL ===
 ciudades_disponibles, categorias_disponibles = cargar_datos()
-
 colA, colB = st.columns([2, 1], gap="large")
 
 with colA:
@@ -105,9 +113,9 @@ with colA:
 
     c3, c4 = st.columns(2)
     with c3:
-        fecha_inicio = st.date_input("Fecha inicio", date.today(), key="fecha_inicio")
+        st.session_state.fecha_inicio = st.date_input("Fecha inicio", st.session_state.fecha_inicio, key="fecha_inicio_input")
     with c4:
-        fecha_fin = st.date_input("Fecha fin", date.today(), key="fecha_fin")
+        st.session_state.fecha_fin = st.date_input("Fecha fin", st.session_state.fecha_fin, key="fecha_fin_input")
 
     if st.button("🔍 Buscar eventos", key="buscar_btn"):
         if not query.strip():
@@ -121,8 +129,8 @@ with colA:
                             "query": query,
                             "ciudad": ciudad or None,
                             "categoria": categoria or None,
-                            "fecha_inicio": fecha_inicio.strftime("%Y-%m-%d"),
-                            "fecha_fin": fecha_fin.strftime("%Y-%m-%d"),
+                            "fecha_inicio": st.session_state.fecha_inicio.strftime("%Y-%m-%d"),
+                            "fecha_fin": st.session_state.fecha_fin.strftime("%Y-%m-%d"),
                             "respuesta": st.session_state.clave_respuesta
                         },
                         timeout=15
@@ -133,69 +141,53 @@ with colA:
 
                     data = respuesta.json()
                     eventos = data.get("eventos", [])
-                    mensaje = data.get("mensaje", "")
+                    st.session_state.eventos_encontrados = eventos
+                    st.session_state.pagina_actual = 0
 
-                    if eventos:
-                        st.success(f"🎯 {mensaje}")
-                        total_paginas = (len(eventos) - 1) // 10 + 1
+                    if len(eventos) >= 5:
+                        st.info("🧠 Generando agenda automáticamente desde resultados...")
+                        r2 = requests.post("http://localhost:8502/agenda", json={
+                            "ciudad": ciudad or None,
+                            "categorias": [categoria] if categoria else [],
+                            "fecha_inicio": str(st.session_state.fecha_inicio),
+                            "fecha_fin": str(st.session_state.fecha_fin),
+                            "eventos": eventos
+                        }, timeout=30)
+                        if r2.ok:
+                            d = r2.json()
+                            st.session_state.agenda_generada = d.get("agenda", [])
+                            st.session_state.agenda_score = d.get("score", 0)
+                        else:
+                            st.warning("⚠️ No se pudo generar agenda")
 
-                        st.write(f"Página {st.session_state.pagina_actual + 1} de {total_paginas}")
-                        inicio = st.session_state.pagina_actual * 10
-                        fin = inicio + 10
-                        for ev in eventos[inicio:fin]:
-                            mostrar_evento(ev)
-
-                        col_prev, col_next = st.columns([1, 1])
-                        with col_prev:
-                            if st.button("⬅️ Anterior") and st.session_state.pagina_actual > 0:
-                                st.session_state.pagina_actual -= 1
-                                st.experimental_rerun()
-                        with col_next:
-                            if st.button("➡️ Siguiente") and st.session_state.pagina_actual < total_paginas - 1:
-                                st.session_state.pagina_actual += 1
-                                st.experimental_rerun()
-                    else:
-                        st.info("ℹ️ No se encontraron eventos que coincidan con tu búsqueda")
-
-                except requests.exceptions.Timeout:
-                    st.error("⏳ El servidor tardó demasiado en responder")
                 except Exception as e:
-                    st.error(f"❌ Error inesperado: {str(e)}")
+                    st.error(f"❌ Error: {e}")
+
+    eventos = st.session_state.eventos_encontrados
+    if eventos:
+        total_paginas = (len(eventos) - 1) // 10 + 1
+        st.write(f"Página {st.session_state.pagina_actual + 1} de {total_paginas}")
+        inicio = st.session_state.pagina_actual * 10
+        fin = inicio + 10
+        for ev in eventos[inicio:fin]:
+            mostrar_evento(ev)
+
+        col_prev, col_next = st.columns(2)
+        with col_prev:
+            if st.button("⬅️ Anterior") and st.session_state.pagina_actual > 0:
+                st.session_state.pagina_actual -= 1
+                st.rerun()
+        with col_next:
+            if st.button("➡️ Siguiente") and st.session_state.pagina_actual < total_paginas - 1:
+                st.session_state.pagina_actual += 1
+                st.rerun()
 
 with colB:
-    st.subheader("🧠 Agenda personalizada")
-    st.markdown("Generada según ciudad, categoría y fechas.")
-
-    if st.button("📅 Generar agenda personalizada", key="agenda_btn"):
-        with st.spinner("Generando recomendaciones..."):
-            try:
-                res = requests.post(
-                    "http://localhost:8502/agenda",
-                    json={
-                        "ciudad": ciudad or None,
-                        "categorias": [categoria] if categoria else [],
-                        "fecha_inicio": str(fecha_inicio),
-                        "fecha_fin": str(fecha_fin)
-                    },
-                    timeout=30
-                )
-
-                if res.status_code == 200:
-                    data = res.json()
-                    agenda = data.get("agenda", [])
-                    score = data.get("score", 0)
-
-                    if agenda:
-                        st.success(f"✅ Agenda generada (puntaje: {score:.2f}/5)")
-                        for i, ev in enumerate(agenda, 1):
-                            with st.expander(f"🗓️ Evento {i}"):
-                                mostrar_evento(ev)
-                    else:
-                        st.info("ℹ️ No se pudo generar una agenda con tus preferencias")
-                else:
-                    st.error(f"❌ Error al generar agenda: {res.text}")
-
-            except requests.exceptions.Timeout:
-                st.error("⏳ El servidor tardó demasiado en generar la agenda")
-            except Exception as e:
-                st.error(f"❌ Error inesperado: {str(e)}")
+    st.subheader("🧠 Agenda generada")
+    if st.session_state.agenda_generada:
+        st.markdown(f"🎯 Puntaje total: **{st.session_state.agenda_score:.2f}**")
+        for i, ev in enumerate(st.session_state.agenda_generada, 1):
+            with st.expander(f"🗓️ Evento {i}"):
+                mostrar_evento(ev)
+    else:
+        st.info("La agenda se mostrará aquí si se encuentran al menos 5 eventos.")

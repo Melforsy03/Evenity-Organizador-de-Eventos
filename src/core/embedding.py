@@ -200,61 +200,99 @@ class EventEmbedder:
         EventEmbedder._index = self.index
         logger.info(f"✅ Índice construido. Total embeddings: {self.index.ntotal}")
 
-    def filtered_search(self, query: str, city: str = None, user_coords: tuple = None,
-                    max_km: int = None, k: int = 100, page: int = 1, limit: int = 10) -> list:
-            """
-            Realiza una búsqueda semántica con filtrado opcional por ciudad y distancia.
-            Retorna eventos ordenados por score y fecha, paginados.
-            """
-            if self.index is None or not self.events:
-                return []
+    def filtered_search(
+        self,
+        query: str,
+        city: str = None,
+        user_coords: tuple = None,
+        max_km: int = None,
+        category: str = None,
+        start_date: str = None,
+        end_date: str = None,
+        k: int = 100,
+        page: int = 1,
+        limit: int = 10
+    ) -> list:
+        all_eventos = []
 
-            # Codificar la query y normalizar
-            q_vec = self.model.encode([query], convert_to_numpy=True).astype("float32")
-            q_vec /= np.linalg.norm(q_vec, axis=1, keepdims=True)
-
-            # Buscar los k más similares
-            D, I = self.index.search(q_vec, k)
+        for shard, (index, eventos) in self.shards.items():
+            q_vec = self.model.encode([query], convert_to_numpy=True)
+            q_vec = self.normalize_embeddings(q_vec.astype("float32"))
+            D, I = index.search(q_vec, k)
             indices = I[0]
             scores = D[0]
 
-            resultados = []
-            for j, i in enumerate(indices):
-                if i < 0 or i >= len(self.events):
-                    continue
+            resultados = [
+                {**eventos[i], "score": float(scores[j])}
+                for j, i in enumerate(indices)
+                if i >= 0 and i < len(eventos)
+            ]
 
-                evento = self.events[i]
-                ciudad_ev = evento.get("spatial_info", {}).get("area", {}).get("city", "").lower()
+            # Filtro por ciudad (desde el shard)
+            if city and shard != city:
+                continue
 
-                if city and city.lower() not in ciudad_ev:
-                    continue
+            # Filtro por coordenadas si aplica
+            if user_coords and max_km:
+                resultados = [
+                    ev for ev in resultados
+                    if self._is_event_near(ev, user_coords, max_km)
+                ]
 
-                if user_coords and evento.get("coords"):
-                    dist = haversine(user_coords, evento["coords"])
-                    if max_km and dist > max_km:
-                        continue
+            # Filtro por categoría
+            if category:
+                resultados = [
+                    ev for ev in resultados
+                    if category.lower() in (
+                        ev.get("classification", {}).get("primary_category", "") or ""
+                    ).lower()
+                ]
 
-                evento = dict(evento)  # crear copia si se va a modificar
-                evento["score"] = float(scores[j])
-                resultados.append(evento)
+            # Filtro por fecha
+            if start_date or end_date:
+                def parse_date(d):
+                    try:
+                        dt = datetime.fromisoformat(d.replace("Z", "+00:00"))
+                        return dt if dt.tzinfo else dt.replace(tzinfo=tz.UTC)
+                    except:
+                        return None
 
-            # === Ordenar por score (desc) y luego por fecha (asc)
-            def extraer_fecha(ev):
-                fecha_str = ev.get("temporal_info", {}).get("start")
-                try:
-                    return datetime.fromisoformat(fecha_str)
-                except:
-                    return datetime.max
+                start_dt = parse_date(start_date) if start_date else None
+                end_dt = parse_date(end_date) if end_date else None
 
-            resultados.sort(
-                key=lambda ev: (-ev.get("score", 0), extraer_fecha(ev))
-            )
+                resultados = [
+                    ev for ev in resultados
+                    if self._event_in_range(ev, start_dt, end_dt)
+                ]
 
-            # === Paginación
-            inicio = (page - 1) * limit
-            fin = inicio + limit
-            return resultados[inicio:fin]
-        
+            all_eventos.extend(resultados)
+
+        # Ordenar por score descendente
+        all_eventos.sort(key=lambda x: x["score"], reverse=True)
+
+        # Paginación
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        return all_eventos[start_idx:end_idx]
+
+    def _event_in_range(self, event, start_dt, end_dt):
+        fecha_raw = event.get("temporal_info", {}).get("start")
+        if not fecha_raw:
+            return False
+
+        try:
+            fecha = datetime.fromisoformat(fecha_raw.replace("Z", "+00:00"))
+            if fecha.tzinfo is None:
+                fecha = fecha.replace(tzinfo=tz.UTC)
+
+            if start_dt and fecha < start_dt:
+                return False
+            if end_dt and fecha > end_dt:
+                return False
+            return True
+        except Exception:
+            return False
+    
     def _is_event_near(self, event: Dict[str, Any], user_coords: tuple, max_km: float) -> bool:
         """Verifica si un evento está cerca de las coordenadas del usuario"""
         loc = event.get("spatial_info", {}).get("venue", {}).get("location", {})
@@ -399,23 +437,36 @@ class EventEmbedder:
         print(f"✅ Cargados {len(embedder.events)} eventos desde {input_dir}")
         return embedder
 
-    def search(self, query: str, shard_key: str, k: int = 30):
-        if shard_key not in self.shards:
-            return [], []
-
-        index, eventos = self.shards[shard_key]
+    def search(self, query: str, shard_key: str = None, k: int = 30):
         q_vec = self.model.encode([query], convert_to_numpy=True)
         q_vec = self.normalize_embeddings(q_vec.astype("float32"))
 
-        D, I = index.search(q_vec, k)
-        indices = I[0]
-        scores = D[0]
+        resultados = []
 
-        resultados = [
-            {**eventos[i], "score": float(scores[j])}
-            for j, i in enumerate(indices) if i >= 0 and i < len(eventos)
-        ]
-        return resultados, scores.tolist()
+        if shard_key and shard_key in self.shards:
+            index, eventos = self.shards[shard_key]
+            D, I = index.search(q_vec, k)
+            indices = I[0]
+            scores = D[0]
+
+            resultados = [
+                {**eventos[i], "score": float(scores[j])}
+                for j, i in enumerate(indices) if 0 <= i < len(eventos)
+            ]
+            return resultados, scores.tolist()
+
+        # Si no se especifica shard_key o no es válido, buscar en todos los shards
+        all_resultados = []
+        for ciudad, (index, eventos) in self.shards.items():
+            D, I = index.search(q_vec, k)
+            indices = I[0]
+            scores = D[0]
+
+            for j, i in enumerate(indices):
+                if 0 <= i < len(eventos):
+                    all_resultados.append({**eventos[i], "score": float(scores[j])})
+
+        return all_resultados[:k], []
 
     def hybrid_search(self, query: str, keywords: List[str] = None, k: int = 5):
         semantic_results, scores = self.search(query, k*2)

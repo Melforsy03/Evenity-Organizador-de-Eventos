@@ -21,7 +21,7 @@ import queue
 from api.servidor_base import app, logger , response_queues , response_queues_lock
 from api.contexto_global import obtener_bandeja
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date , timezone
 from copy import deepcopy
 
 _embedder = None
@@ -219,59 +219,60 @@ def buscar():
             "status": "error",
             "mensaje": "Error interno del servidor"
         }), 500
+def to_aware(iso_str):
+    dt = datetime.fromisoformat(iso_str)
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
 @app.route("/agenda", methods=["POST"])
 @ensure_initialized
 def generar_agenda_optima():
     try:
         data = request.json or {}
-        clave_respuesta = "res_agenda_" + uuid.uuid4().hex
-        
-        # Registrar la solicitud
-        with response_queues_lock:
-            response_queues[clave_respuesta] = queue.Queue()
-            response_queue = response_queues[clave_respuesta]
+        eventos_entrada = data.get("eventos", [])
+        fecha_inicio = data.get("fecha_inicio")
+        fecha_fin = data.get("fecha_fin")
 
         preferencias = {
             "location": data.get("ciudad"),
             "categories": data.get("categorias", []),
-            "available_dates": (
-                data.get("fecha_inicio"),
-                data.get("fecha_fin")
-            ) if data.get("fecha_inicio") and data.get("fecha_fin") else None
         }
-        
+
+        if fecha_inicio and fecha_fin:
+            preferencias["available_dates"] = (
+                to_aware(fecha_inicio),
+                to_aware(fecha_fin)
+            )
+
+        clave_respuesta = "res_agenda_" + uuid.uuid4().hex
+        with response_queues_lock:
+            response_queues[clave_respuesta] = queue.Queue()
         contenido = {
             "preferencias": preferencias,
+            "eventos_filtrados": eventos_entrada,
             "respuesta": clave_respuesta
         }
-        
-        # Enviar solicitud al optimizador
-        bandeja_optimizador = obtener_bandeja("optimizador")
-        if bandeja_optimizador:
-            bandeja_optimizador.put(Mensaje(
-                emisor="api",
-                receptor="optimizador",
-                contenido=contenido
-            ))
-        else:
-            raise RuntimeError("Bandeja del optimizador no disponible")
 
-        # Esperar respuesta
+        bandeja = obtener_bandeja("optimizador")
+        if not bandeja:
+            return jsonify({"error": "Optimizador no disponible"}), 500
+        bandeja.put(Mensaje("api", "optimizador", contenido))
+
         try:
-            respuesta = response_queue.get(timeout=60)
-            agenda_limpia = limpiar_eventos(respuesta.get("data", {}).get("agenda", []))
-            return jsonify({
-                "agenda": agenda_limpia,
-                "count": len(agenda_limpia),
-                "score": respuesta.get("data", {}).get("score", 0)
-            })
+            respuesta = response_queues[clave_respuesta].get(timeout=60)
         except queue.Empty:
-            raise TimeoutError("Agente optimizador no respondió a tiempo")
-            
-    except TimeoutError as e:
-        logger.error(f"Timeout en /agenda: {str(e)}")
-        return jsonify({"error": str(e)}), 504
+            return jsonify({"error": "Timeout generando agenda"}), 504
+
+        agenda = respuesta.get("data", {}).get("agenda", [])
+        score = respuesta.get("data", {}).get("score", 0)
+
+        agenda_simple = limpiar_eventos(agenda)
+
+        return jsonify({
+            "agenda": agenda_simple,
+            "count": len(agenda_simple),
+            "score": score
+        })
+
     except Exception as e:
-        logger.error(f"Error en /agenda: {str(e)}", exc_info=True)
-        return jsonify({"error": "Error interno del servidor"}), 500
-   
+        logger.error(f"Error en /agenda: {e}", exc_info=True)
+        return jsonify({"error": "Error interno"}), 500

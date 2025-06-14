@@ -218,47 +218,53 @@ class AgenteOptimizador(AgenteBase):
         super().__init__(nombre, bandeja_entrada)
         self.grafo = None
         
-
     def ejecutar(self):
         print("🎯 [Optimizador] Agente activo y escuchando...")
         while True:
             try:
                 msg = self.bandeja_entrada.get()
-                
-                # 1. Si el grafo está listo
+
+                # Si el grafo está listo
                 if msg.receptor == self.nombre and msg.contenido == "grafo_listo":
                     self.run_once()
-                
-                # 2. Si viene petición desde API
-                if (msg.receptor == self.nombre and 
-                    isinstance(msg.contenido, dict) and 
-                    "preferencias" in msg.contenido):
-                    
+
+                # Si viene una petición con preferencias y posiblemente eventos filtrados
+                if (
+                    msg.receptor == self.nombre
+                    and isinstance(msg.contenido, dict)
+                    and "preferencias" in msg.contenido
+                ):
                     preferencias = msg.contenido["preferencias"]
                     respuesta_key = msg.contenido["respuesta"]
-                    
+
                     try:
-                        embedder = EventEmbedder._instance
-                        eventos = embedder.events
-                        scores = {ev.get("basic_info", {}).get("title", ""): 1.0 for ev in eventos}
-                        
+                        eventos = msg.contenido.get("eventos_filtrados")
+                        if not eventos:
+                            embedder = EventEmbedder._instance
+                            eventos = embedder.events
+
+                        scores = {
+                            ev.get("basic_info", {}).get("title", ""): 1.0
+                            for ev in eventos
+                        }
+
                         agenda, score, _ = obtener_eventos_optimales(
-                            eventos, 
-                            preferencias, 
-                            cantidad=5, 
-                            scores_grafo=scores
+                            eventos,
+                            preferencias,
+                            cantidad=5,
+                            scores_grafo=scores,
                         )
-                        
-                        # Enviar por ambos canales
+
                         self.enviar_respuesta_api(respuesta_key, agenda, score)
-                        
+
                     except Exception as e:
                         print(f"❌ [Optimizador] Error: {e}")
                         self.enviar_error_api(respuesta_key, str(e))
-                        
+
             except Exception as e:
                 print(f"🔥 [Optimizador] Error crítico: {e}")
                 time.sleep(1)
+
 
     def enviar_respuesta_api(self, clave_respuesta, agenda, score):
         """Envía respuesta por todos los canales disponibles"""
@@ -296,6 +302,10 @@ class AgenteOptimizador(AgenteBase):
         """Envía mensaje de error"""
         self.enviar_respuesta_api(clave_respuesta, [], error)
 class AgenteGapFallback(AgenteBase):
+    def __init__(self, nombre, bandeja_entrada):
+        super().__init__(nombre, bandeja_entrada)
+        
+
     def ejecutar(self):
         print("📡 [GapFallback] Agente activo y escuchando...")
         while True:
@@ -307,55 +317,110 @@ class AgenteGapFallback(AgenteBase):
                 print(f"⚠️ [GapFallback] Disparo solicitado: {msg.contenido}")
 
                 query = msg.contenido.get("query", "")
-                ciudad = msg.contenido.get("ciudad", None)  # aún no usado
-                categoria = msg.contenido.get("categoria", None)  # aún no usado
-                respuesta_clave = msg.contenido.get("respuesta", "fallback_resultado")
+                ciudad = msg.contenido.get("ciudad", None)
+                categoria = msg.contenido.get("categoria", None)
+                respuesta_clave = msg.contenido.get("respuesta", f"fallback_resultado_{uuid.uuid4().hex}")
 
-                fecha_inicio = msg.contenido.get("fecha_inicio")
-                fecha_fin = msg.contenido.get("fecha_fin")
+                # Procesamiento de fechas
+                fecha_inicio = self.normalizar_fecha(msg.contenido.get("fecha_inicio"))
+                fecha_fin = self.normalizar_fecha(msg.contenido.get("fecha_fin"))
 
-                # Conversión segura si llegan fechas tipo string
-                if isinstance(fecha_inicio, str):
-                    fecha_inicio = fecha_inicio.split("T")[0]
-                if isinstance(fecha_fin, str):
-                    fecha_fin = fecha_fin.split("T")[0]
-
-                # Si no hay ni ciudad, ni categoría, ni fechas => NO DISPARAR
+                # Validación de filtros mínimos
                 if not any([ciudad, categoria, fecha_inicio, fecha_fin]):
                     print("🚫 [GapFallback] Fallback ignorado: no hay filtros suficientes.")
-                    self.enviar("api", {
-                        "key": respuesta_clave,
-                        "data": [],
-                        "mensaje": "No se ejecutó fallback: se requiere al menos ciudad, categoría o fecha"
-                    })
+                    self.enviar_respuesta_error(
+                        respuesta_clave,
+                        "No se ejecutó fallback: se requiere al menos ciudad, categoría o fecha"
+                    )
                     continue
+
+                # Llamada al API de fallback
                 eventos = fallback_api_call(
                     query=query,
-                    start_date=fecha_inicio,
-                    end_date=fecha_fin,
-                    source="ticketmaster"  # puedes cambiar esto dinámicamente
+                    start_date=fecha_inicio.isoformat() if fecha_inicio else None,
+                    end_date=fecha_fin.isoformat() if fecha_fin else None,
+                    source="ticketmaster"
                 )
-                eventos_ordenados = ordenar_y_paginar(eventos, page=1, limit=10)
 
-                print(f"🎯 [GapFallback] Recuperados {len(eventos)} eventos")
-
-                self.enviar("api", {
-                    "key": respuesta_clave,
-                    "data": eventos_ordenados,
-                    "mensaje": f"Eventos recuperados vía fallback: {len(eventos)}"
-                })
                 if eventos:
+                    # Procesar y ordenar eventos
+                    eventos_ordenados = ordenar_y_paginar(eventos, page=1, limit=10)
+                    print(f"🎯 [GapFallback] Recuperados {len(eventos)} eventos")
+
+                    # Enviar respuesta
+                    self.enviar_respuesta_exitosa(
+                        respuesta_clave,
+                        eventos_ordenados,
+                        f"Eventos recuperados vía fallback: {len(eventos)}"
+                    )
+
+                    # Agregar eventos al sistema
                     embedder = EventEmbedder._instance
                     embedder.add_new_events(eventos)
-                    print(f"📥 [GapFallback] {len(eventos)} eventos agregados dinámicamente al sistema") 
+                    print(f"📥 [GapFallback] {len(eventos)} eventos agregados dinámicamente")
+                else:
+                    self.enviar_respuesta_error(respuesta_clave, "No se encontraron eventos en el fallback")
                     
             except Exception as e:
                 print(f"❌ [GapFallback] Error: {e}")
-                self.enviar("api", {
-                    "key": "fallback_resultado",
-                    "error": str(e)
-                })
-                
+                self.enviar_respuesta_error(
+                    f"fallback_error_{uuid.uuid4().hex}",
+                    f"Error en fallback: {str(e)}"
+                )
+
+    def normalizar_fecha(self, fecha):
+        """Normaliza fechas de diferentes formatos a datetime.date"""
+        if not fecha:
+            return None
+        try:
+            if isinstance(fecha, str):
+                return datetime.fromisoformat(fecha.split('T')[0]).date()
+            elif isinstance(fecha, (datetime, date)):
+                return fecha.date() if isinstance(fecha, datetime) else fecha
+            return None
+        except Exception as e:
+            print(f"⚠️ [GapFallback] Error normalizando fecha: {e}")
+            return None
+
+    def enviar_respuesta_exitosa(self, clave_respuesta, datos, mensaje=""):
+        """Envía respuesta exitosa por ambos canales"""
+        respuesta = {
+            "key": clave_respuesta,
+            "data": datos,
+            "mensaje": mensaje,
+            "status": "success"
+        }
+
+        # 1. Sistema de colas dedicadas
+        try:
+            with self.response_queues_lock:
+                if clave_respuesta in self.response_queues:
+                    self.response_queues[clave_respuesta].put(respuesta)
+                    print(f"✅ [GapFallback] Respuesta enviada a cola dedicada ({clave_respuesta})")
+        except Exception as e:
+            print(f"⚠️ [GapFallback] Error en cola dedicada: {e}")
+
+        # 2. Sistema tradicional de mensajes
+        try:
+            bandeja_api = obtener_bandeja("api")
+            if bandeja_api:
+                bandeja_api.put(Mensaje(
+                    emisor=self.nombre,
+                    receptor="api",
+                    contenido=respuesta
+                ))
+                print(f"✅ [GapFallback] Respuesta enviada a bandeja API tradicional")
+        except Exception as e:
+            print(f"⚠️ [GapFallback] Error enviando a bandeja API: {e}")
+
+    def enviar_respuesta_error(self, clave_respuesta, mensaje_error):
+        """Envía mensaje de error"""
+        print(f"⚠️ [GapFallback] Enviando error: {mensaje_error}")
+        self.enviar_respuesta_exitosa(
+            clave_respuesta,
+            [],
+            mensaje_error
+        )             
 class AgenteBusquedaInteractiva(AgenteBase):
     def __init__(self, nombre, bandeja_entrada):
         super().__init__(nombre, bandeja_entrada)
@@ -377,14 +442,13 @@ class AgenteBusquedaInteractiva(AgenteBase):
             try:
                 msg = self.bandeja_entrada.get()
                 if msg.receptor != self.nombre:
-                    self.bandeja_entrada.put(msg)  # Reenviar si no es para nosotros
+                    self.bandeja_entrada.put(msg)
                     continue
 
                 if not isinstance(msg.contenido, dict):
                     print(f"⚠️ [BusquedaInteractiva] Mensaje inválido ignorado: {msg}")
                     continue
 
-                # Extraer parámetros de búsqueda
                 query = msg.contenido.get("query", "").strip()
                 ciudad = msg.contenido.get("ciudad")
                 categoria = msg.contenido.get("categoria")
@@ -394,12 +458,10 @@ class AgenteBusquedaInteractiva(AgenteBase):
 
                 print(f"🔍 [BusquedaInteractiva] Nueva búsqueda - Query: '{query}' | Ciudad: {ciudad} | Categoría: {categoria}")
 
-                # Validación básica
                 if not query:
                     self.enviar_respuesta_error(clave_respuesta, "La consulta no puede estar vacía")
                     continue
 
-                # Obtener instancia del embedder
                 try:
                     embedder = self.get_embedder()
                     if embedder is None:
@@ -408,39 +470,43 @@ class AgenteBusquedaInteractiva(AgenteBase):
                     self.enviar_respuesta_error(clave_respuesta, f"Error en el sistema de búsqueda: {str(e)}")
                     continue
 
-                # Realizar la búsqueda
                 try:
-                    if ciudad and ciudad in embedder.shards:
-                        resultados, _ = embedder.search(
-                            query=query,
-                            shard_key=ciudad,
-                            k=50
-                        )
-                    else:
-                        resultados = embedder.filtered_search(
-                            query=query,
-                            city=ciudad,
-                            category=categoria,
-                            start_date=fecha_inicio,
-                            end_date=fecha_fin,
-                            k=100
-                        )
+                    usar_filtros = any([ciudad, categoria])
 
-                    # Procesar resultados
-                    eventos_finales = ordenar_y_paginar(resultados, page=1, limit=30)
-                    eventos_finales = limpiar_eventos(eventos_finales)
+                    if usar_filtros:
+                        if ciudad and ciudad in embedder.shards and not categoria :
+                            resultados, _ = embedder.search(query=query, shard_key=ciudad, k=60)
+                        elif ciudad and categoria:
+                            resultados, _ = embedder.filtered_search(
+                                query=query,
+                                city=ciudad,
+                                category=categoria,
+                                fecha_inicio=fecha_inicio,
+                                fecha_fin=fecha_fin,
+                                k=60
+                            )
+                        else :
+                            resultados = embedder.filtered_search(
+                                query=query,
+                                city= None,
+                                category=categoria,
+                                fecha_inicio=fecha_inicio,
+                                fecha_fin=fecha_fin,
+                                k=60)
+                    else:
+                        resultados, _ = embedder.search(query=query, k=60 , shard_key=None)
+
+                    eventos_finales = limpiar_eventos(resultados)
                     total_resultados = len(eventos_finales)
 
                     print(f"📊 [BusquedaInteractiva] Resultados encontrados: {total_resultados}")
 
-                    # Enviar respuesta exitosa
                     self.enviar_respuesta_exitosa(
                         clave_respuesta,
                         eventos_finales,
                         f"Se encontraron {total_resultados} evento(s)"
                     )
 
-                    # Disparar fallback si hay pocos resultados
                     if total_resultados < 3:
                         self.disparar_fallback(
                             query=query,
@@ -457,7 +523,7 @@ class AgenteBusquedaInteractiva(AgenteBase):
 
             except Exception as e:
                 print(f"🔥 [BusquedaInteractiva] Error crítico en ciclo principal: {str(e)}")
-                time.sleep(1)  # Prevenir bucles rápidos de error
+                time.sleep(1)
 
     def enviar_respuesta_exitosa(self, clave_respuesta, datos, mensaje=""):
         """Envía una respuesta exitosa por todos los canales disponibles"""

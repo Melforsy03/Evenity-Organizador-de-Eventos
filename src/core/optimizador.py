@@ -12,14 +12,10 @@ Funciones principales:
 Se consideran aspectos como categoría, ciudad, fechas, duración, traslado entre eventos,
 diversidad temática y conectividad en el grafo.
 """
-
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import random
 import math
 from typing import List, Dict, Any, Tuple, Optional
-from geopy.distance import geodesic
-from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
 from geopy.distance import geodesic
 
 PESOS = {
@@ -33,6 +29,13 @@ PESOS = {
     "grafo": 1.2
 }
 
+def ensure_aware(dt):
+    if isinstance(dt, str):
+        dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
 def evaluar_solucion_mejorada(eventos: List[Dict[str, Any]], 
                               preferencias: Dict[str, Any], 
                               scores_grafo: Optional[Dict[str, float]] = None) -> float:
@@ -41,7 +44,6 @@ def evaluar_solucion_mejorada(eventos: List[Dict[str, Any]],
     velocidad_kmh = preferencias.get("velocidad_kmh", 30)
     duracion_maxima = preferencias.get("duracion_maxima", None)
 
-    # Penalización y puntajes
     penalizacion_traslados = 0
     for i in range(len(eventos) - 1):
         t_traslado = tiempo_traslado(eventos[i], eventos[i+1], velocidad_kmh)
@@ -62,13 +64,13 @@ def evaluar_solucion_mejorada(eventos: List[Dict[str, Any]],
         fechas_disp = preferencias.get("available_dates")
         if fecha_evento and fechas_disp:
             try:
-                fecha_evento_dt = datetime.fromisoformat(fecha_evento.replace("Z", "+00:00"))
-                inicio_dt = datetime.fromisoformat(fechas_disp[0])
-                fin_dt = datetime.fromisoformat(fechas_disp[1])
+                inicio_dt = ensure_aware(fechas_disp[0])
+                fin_dt = ensure_aware(fechas_disp[1])
+                fecha_evento_dt = ensure_aware(fecha_evento)
                 if inicio_dt <= fecha_evento_dt <= fin_dt:
                     score_total += PESOS["fecha"]
-            except:
-                pass
+            except Exception as e:
+                print(f"⚠️ Error comparando fechas: {e}")
 
         duracion_evento = e.get("temporal_info", {}).get("duration_minutes")
         if duracion_maxima and duracion_evento:
@@ -77,31 +79,24 @@ def evaluar_solucion_mejorada(eventos: List[Dict[str, Any]],
             else:
                 score_total -= PESOS["duracion"]
 
-        # Incorporar score del grafo
         if scores_grafo:
             nombre = e.get("basic_info", {}).get("title", "")
             score_total += scores_grafo.get(nombre, 0) * PESOS["grafo"]
 
-    # Bonus por diversidad de categorías
     score_total += len(categorias_unicas) * PESOS["diversidad_categorias"]
-
-    # Penalizar traslados largos
     score_total -= penalizacion_traslados * PESOS["traslado"]
-
-    # Penalizar huecos grandes entre eventos
     huecos_totales = calcular_huecos_totales(eventos)
     score_total += huecos_totales * PESOS["huecos"]
 
     return score_total
 
 def calcular_huecos_totales(eventos: List[Dict[str, Any]]) -> float:
-    """Suma total de tiempos muertos entre eventos (en minutos)."""
     if len(eventos) < 2:
         return 0
     tiempos = []
     for e in eventos:
         try:
-            start = datetime.fromisoformat(e["temporal_info"]["start"].replace("Z", "+00:00"))
+            start = ensure_aware(e["temporal_info"]["start"])
             dur = e["temporal_info"].get("duration_minutes", 120)
             end = start + timedelta(minutes=dur)
             tiempos.append((start, end))
@@ -113,18 +108,17 @@ def calcular_huecos_totales(eventos: List[Dict[str, Any]]) -> float:
         diff = (tiempos[i+1][0] - tiempos[i][1]).total_seconds() / 60
         if diff > 0:
             huecos += diff
-    return -huecos  # negativo para penalizar
+    return -huecos
+
 def hay_solape(e1, e2):
-        try:
-            fecha1 = e1["temporal_info"]["start"]
-            duracion1 = e1["temporal_info"].get("duration_minutes", 120)
-            fecha2 = e2["temporal_info"]["start"]
-            duracion2 = e2["temporal_info"].get("duration_minutes", 120)
-            dt1 = datetime.fromisoformat(fecha1.replace("Z", "+00:00"))
-            dt2 = datetime.fromisoformat(fecha2.replace("Z", "+00:00"))
-            return not (dt1 + timedelta(minutes=duracion1) <= dt2 or dt2 + timedelta(minutes=duracion2) <= dt1)
-        except Exception:
-            return False
+    try:
+        dt1 = ensure_aware(e1["temporal_info"]["start"])
+        dt2 = ensure_aware(e2["temporal_info"]["start"])
+        dur1 = e1["temporal_info"].get("duration_minutes", 120)
+        dur2 = e2["temporal_info"].get("duration_minutes", 120)
+        return not (dt1 + timedelta(minutes=dur1) <= dt2 or dt2 + timedelta(minutes=dur2) <= dt1)
+    except Exception:
+        return False
 
 def generar_solucion_inicial(pool: List[Dict[str, Any]], n: int) -> List[Dict[str, Any]]:
     eventos_validos = [e for e in pool if "temporal_info" in e and e["temporal_info"].get("start")]
@@ -193,7 +187,6 @@ def hill_climbing_mejorado(pool: List[Dict[str, Any]],
 
     return best, best_score, scores_trace
 
-
 def obtener_eventos_optimales(eventos: List[Dict[str, Any]], 
                             preferencias: Dict[str, Any], 
                             cantidad: int = 5, 
@@ -202,5 +195,3 @@ def obtener_eventos_optimales(eventos: List[Dict[str, Any]],
     if len(eventos) < cantidad:
         raise ValueError(f"No hay suficientes eventos para optimizar (necesarios: {cantidad}, disponibles: {len(eventos)})")
     return hill_climbing_mejorado(eventos, preferencias, n=cantidad, max_iter=max_iter, scores_grafo=scores_grafo)
-
-
