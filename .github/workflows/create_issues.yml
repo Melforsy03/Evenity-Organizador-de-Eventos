@@ -1,82 +1,50 @@
-name: Issues Iniciales Automáticamente
+name: Resetear Issues del Proyecto
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:  # Ejecutar manualmente desde GitHub Actions
 
 jobs:
-  create_issues:
+  resetear_issues:
     runs-on: ubuntu-latest
     steps:
-      - name: Crear Issue Semana 1
+      - name: Borrar todos los issues abiertos
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
-          curl -X POST -H "Authorization: token $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/issues \
-            -d '{"title":"Semana 1: Definición del alcance y arquitectura","body":"Definir el alcance del proyecto, arquitectura y distribución de tareas."}'
+          echo "🔍 Buscando issues abiertos..."
+          issues=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+                      -H "Accept: application/vnd.github+json" \
+                      https://api.github.com/repos/$REPO/issues?state=open | jq '.[].number')
 
-      - name: Crear Issue Semana 2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -X POST -H "Authorization: token $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/issues \
-            -d '{"title":"Semana 2: Implementación del crawler y extracción de datos","body":"Desarrollar el módulo crawler.py para extracción de eventos y validación."}'
+          for issue in $issues; do
+            echo "❌ Cerrando issue #$issue..."
+            curl -s -X PATCH -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/$REPO/issues/$issue \
+              -d '{"state": "closed"}'
+          done
 
-      - name: Crear Issue Semana 3
+      - name: Crear Issues iniciales (Semana 1-8)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
-          curl -X POST -H "Authorization: token $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/issues \
-            -d '{"title":"Semana 3: Normalización y procesamiento de eventos","body":"Construcción del módulo procesamiento.py para estandarizar eventos."}'
+          crear_issue() {
+            titulo=$1
+            cuerpo=$2
+            echo "➕ Creando issue: $titulo"
+            curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/$REPO/issues \
+              -d "{\"title\":\"$titulo\",\"body\":\"$cuerpo\"}" > /dev/null
+          }
 
-      - name: Crear Issue Semana 4
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -X POST -H "Authorization: token $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/issues \
-            -d '{"title":"Semana 4: Generación de embeddings y búsqueda semántica","body":"Desarrollar embedding.py para vectorización y búsqueda eficiente."}'
-
-      - name: Crear Issue Semana 5
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -X POST -H "Authorization: token $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/issues \
-            -d '{"title":"Semana 5: Construcción y uso del grafo de conocimiento","body":"Implementar grafo para relaciones y recomendaciones avanzadas."}'
-
-      - name: Crear Issue Semana 6
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -X POST -H "Authorization: token $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/issues \
-            -d '{"title":"Semana 6: Interfaz de usuario con Streamlit","body":"Desarrollar visual.py para UI interactiva con filtros y agendas."}'
-
-      - name: Crear Issue Semana 7
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -X POST -H "Authorization: token $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/issues \
-            -d '{"title":"Semana 7: Optimización y mejoras finales","body":"Refinar motor de recomendaciones, gestión de sesiones y documentación."}'
-
-      - name: Crear Issue Semana 8
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -X POST -H "Authorization: token $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/issues \
-            -d '{"title":"Semana 8: Preparación para entrega y presentación","body":"Redacción del README, reporte y preparación de la presentación final."}'
+          crear_issue "Semana 1: Definición del alcance y arquitectura" "Definir el alcance del proyecto, arquitectura y distribución de tareas."
+          crear_issue "Semana 2: Implementación del crawler y extracción de datos" "Desarrollar el módulo crawler.py para extracción de eventos y validación."
+          crear_issue "Semana 3: Normalización y procesamiento de eventos" "Construcción del módulo procesamiento.py para estandarizar eventos."
+          crear_issue "Semana 4: Generación de embeddings y búsqueda semántica" "Desarrollar embedding.py para vectorización y búsqueda eficiente."
+          crear_issue "Semana 5: Construcción y uso del grafo de conocimiento" "Implementar grafo para relaciones y recomendaciones avanzadas."
+          crear_issue "Semana 6: Interfaz de usuario con Streamlit" "Desarrollar visual.py para UI interactiva con filtros y agendas."
+          crear_issue "Semana 7: Optimización y mejoras finales" "Refinar motor de recomendaciones, gestión de sesiones y documentación."
+          crear_issue "Semana 8: Preparación para entrega y presentación" "Redacción del README, reporte y preparación de la presentación final."
