@@ -392,12 +392,23 @@ class AgenteGapFallback(AgenteBase):
                     query=query,
                     start_date=fecha_inicio.isoformat() if fecha_inicio else None,
                     end_date=fecha_fin.isoformat() if fecha_fin else None,
-                    source="ticketmaster"
+                    source="predicthq"
                 )
 
                 if eventos:
                     # Procesar y ordenar eventos
-                    eventos_ordenados = ordenar_y_paginar(eventos, page=1, limit=10)
+                    # === Nuevo filtrado + orden por número de palabras clave ===
+                    palabras_clave = set(query.strip().lower().split())
+
+                    def contar_coincidencias(ev, palabras_clave):
+                        texto = f"{ev.get('title', '')} {ev.get('description', '')}".lower()
+                        return sum(1 for palabra in palabras_clave if palabra in texto)
+
+                    eventos_ordenados = sorted(
+                        eventos,
+                        key=lambda ev: contar_coincidencias(ev, palabras_clave),
+                        reverse=True
+                    )
                     print(f"🎯 [GapFallback] Recuperados {len(eventos)} eventos")
 
                     # Enviar respuesta
@@ -476,6 +487,7 @@ class AgenteGapFallback(AgenteBase):
             [],
             mensaje_error
         )             
+
 class AgenteBusquedaInteractiva(AgenteBase):
     def __init__(self, nombre, bandeja_entrada):
         super().__init__(nombre, bandeja_entrada)

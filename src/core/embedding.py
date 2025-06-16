@@ -652,8 +652,8 @@ def fallback_api_call(query: str, start_date: str = None, end_date: str = None,
         url = "https://api.seatgeek.com/2/events"
         params = {
             "client_id": scraper.sources_config["seatgeek"]["client_id"],
-            #"q": query,
-            "per_page": 10
+            "q": query,
+            "per_page": 40
         }
         if start_date:
             params["datetime_local.gte"] = start_date
@@ -679,8 +679,8 @@ def fallback_api_call(query: str, start_date: str = None, end_date: str = None,
             "Accept": "application/json"
         }
         params = {
-            #"q": query,
-            "limit": 10,
+            "q": query,
+            "limit": 40,
             #"country": "US"
         }
         if start_date:
@@ -704,9 +704,9 @@ def fallback_api_call(query: str, start_date: str = None, end_date: str = None,
         url = f"{scraper.sources_config['ticketmaster']['base_url']}/events.json"
         params = {
             "apikey": scraper.sources_config["ticketmaster"]["api_key"],
-            #"keyword": query,
+            "keyword": query,
             #"countryCode": "US",
-            "size": 10
+            "size": 40
         }
         if start_date:
             params["startDateTime"] = start_date + "T00:00:00Z"
@@ -726,4 +726,4 @@ def fallback_api_call(query: str, start_date: str = None, end_date: str = None,
                     nuevos_eventos.append(ev)
 
     # 🔐 Garantizar máximo de 10
-    return nuevos_eventos[:10]
+    return nuevos_eventos[:40]
