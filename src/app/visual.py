@@ -20,6 +20,8 @@ if 'fecha_fin' not in st.session_state:
 
 if 'eventos_encontrados' not in st.session_state:
     st.session_state.eventos_encontrados = []
+    # Añadimos un estado para las sugerencias de la última consulta inválida
+    st.session_state.sugerencias_llm = [] 
 
 if 'agenda_generada' not in st.session_state:
     st.session_state.agenda_generada = []
@@ -120,6 +122,7 @@ with colA:
     if st.button("🔍 Buscar eventos", key="buscar_btn"):
         if not query.strip():
             st.warning("⚠️ Por favor ingresa un término de búsqueda")
+            st.session_state.sugerencias_llm = [] # Limpiar sugerencias si la consulta está vacía
         else:
             with st.spinner("Buscando eventos..."):
                 try:
@@ -135,33 +138,69 @@ with colA:
                         },
                         timeout=15
                     )
-                    if respuesta.status_code != 200:
-                        st.error(f"❌ Error del servidor (código {respuesta.status_code})")
-                        st.stop()
+                    
+                    data = respuesta.json() # Procesar siempre la respuesta JSON
 
-                    data = respuesta.json()
-                    eventos = data.get("eventos", [])
-                    st.session_state.eventos_encontrados = eventos
-                    st.session_state.pagina_actual = 0
+                    # Aquí está el cambio principal: manejar la respuesta de la API
+                    if data.get("status") == "invalid":
+                        st.warning(data.get("mensaje", "Lo sentimos, la consulta realizada no es válida en este contexto. Reformúlala."))
+                        st.session_state.sugerencias_llm = data.get("sugerencias", []) # Guardar las sugerencias
+                        st.session_state.eventos_encontrados = [] # Limpiar eventos encontrados si la consulta es inválida
+                        st.session_state.agenda_generada = [] # Limpiar agenda
 
-                    if len(eventos) >= 5:
-                        st.info("🧠 Generando agenda automáticamente desde resultados...")
-                        r2 = requests.post("http://localhost:8502/agenda", json={
-                            "ciudad": ciudad or None,
-                            "categorias": [categoria] if categoria else [],
-                            "fecha_inicio": str(st.session_state.fecha_inicio),
-                            "fecha_fin": str(st.session_state.fecha_fin),
-                            "eventos": eventos
-                        }, timeout=30)
-                        if r2.ok:
-                            d = r2.json()
-                            st.session_state.agenda_generada = d.get("agenda", [])
-                            st.session_state.agenda_score = d.get("score", 0)
+                    elif data.get("status") == "ok":
+                        st.session_state.sugerencias_llm = [] # Limpiar sugerencias si la consulta es válida
+                        eventos = data.get("eventos", [])
+                        st.session_state.eventos_encontrados = eventos
+                        st.session_state.pagina_actual = 0
+
+                        if len(eventos) >= 5:
+                            st.info("🧠 Generando agenda automáticamente desde resultados...")
+                            r2 = requests.post("http://localhost:8502/agenda", json={
+                                "ciudad": ciudad or None,
+                                "categorias": [categoria] if categoria else [],
+                                "fecha_inicio": str(st.session_state.fecha_inicio),
+                                "fecha_fin": str(st.session_state.fecha_fin),
+                                "eventos": eventos
+                            }, timeout=30)
+                            if r2.ok:
+                                d = r2.json()
+                                st.session_state.agenda_generada = d.get("agenda", [])
+                                st.session_state.agenda_score = d.get("score", 0)
+                            else:
+                                st.warning("⚠️ No se pudo generar agenda")
                         else:
-                            st.warning("⚠️ No se pudo generar agenda")
+                            st.session_state.agenda_generada = [] # Limpiar agenda si no hay suficientes eventos
+                            st.session_state.agenda_score = 0
+                    else: # Otros errores de la API (ej. status_code no 200, pero JSON válido con status error)
+                        st.error(f"❌ Error del servidor: {data.get('mensaje', 'Error desconocido')}")
+                        st.session_state.sugerencias_llm = []
+                        st.session_state.eventos_encontrados = []
+                        st.session_state.agenda_generada = []
 
+                except requests.exceptions.Timeout:
+                    st.error("❌ La conexión con el servidor API se agotó. Inténtalo de nuevo más tarde.")
+                    st.session_state.sugerencias_llm = []
+                    st.session_state.eventos_encontrados = []
+                    st.session_state.agenda_generada = []
+                except requests.exceptions.ConnectionError:
+                    st.error("❌ No se pudo conectar con el servidor API. Asegúrate de que esté en ejecución.")
+                    st.session_state.sugerencias_llm = []
+                    st.session_state.eventos_encontrados = []
+                    st.session_state.agenda_generada = []
                 except Exception as e:
-                    st.error(f"❌ Error: {e}")
+                    st.error(f"❌ Error inesperado: {e}")
+                    st.session_state.sugerencias_llm = []
+                    st.session_state.eventos_encontrados = []
+                    st.session_state.agenda_generada = []
+
+    # Mostrar sugerencias si existen, fuera del bloque del botón para que persistan
+    if st.session_state.sugerencias_llm:
+        st.markdown("---")
+        st.markdown("### Sugerencias de búsqueda:")
+        for sug in st.session_state.sugerencias_llm:
+            st.info(f"- **{sug}**")
+        st.markdown("---")
 
     eventos = st.session_state.eventos_encontrados
     if eventos:
@@ -181,6 +220,9 @@ with colA:
             if st.button("➡️ Siguiente") and st.session_state.pagina_actual < total_paginas - 1:
                 st.session_state.pagina_actual += 1
                 st.rerun()
+    elif not st.session_state.sugerencias_llm and query.strip() and st.session_state.query_input: # Solo si la query no está vacía y no hay sugerencias, ni eventos
+        st.info("No se encontraron eventos para tu búsqueda.")
+
 
 with colB:
     st.subheader("🧠 Agenda generada")
