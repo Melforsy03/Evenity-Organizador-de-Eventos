@@ -1,0 +1,4 @@
+Comparación,T-test_p,MannWhitneyU_p
+Random vs HillClimbing,9.820115053012583e-79,2.546836231068655e-49
+Random vs SimulatedAnnealing,2.045874206554015e-68,1.681887460999638e-49
+HillClimbing vs SimulatedAnnealing,0.6762694515736143,0.8589553864148022

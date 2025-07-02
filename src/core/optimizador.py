@@ -207,7 +207,7 @@ def simulated_annealing(pool: List[Dict[str, Any]],
 def obtener_eventos_optimales(eventos: List[Dict[str, Any]], 
                             preferencias: Dict[str, Any], 
                             cantidad: int = 5, 
-                            max_iter: int = 1000,
+                            max_iter: int = 300,
                             scores_grafo: Optional[Dict[str, float]] = None) -> Tuple[List[Dict[str, Any]], float]:
     if len(eventos) < cantidad:
         raise ValueError(f"No hay suficientes eventos para optimizar (necesarios: {cantidad}, disponibles: {len(eventos)})")

@@ -23,13 +23,25 @@ from api.contexto_global import obtener_bandeja
 import uuid
 from datetime import datetime, date , timezone
 from copy import deepcopy
-
+import requests  
 _embedder = None
 _embedder_lock = threading.Lock()
 _initialized = False
 resultados_api = {}
 resultados_api_lock = threading.Lock()
+import google.generativeai as genai
 
+
+
+# Tu clave API de Gemini
+GEMINI_API_KEY = "AIzaSyAkwcMwEZgmqqUAIiln89CJAD3mhaeXufQ"
+
+# Configura la API de Gemini una sola vez al inicio de tu aplicación
+genai.configure(api_key=GEMINI_API_KEY)
+
+# Define el modelo que quieres usar (por ejemplo, "gemini-pro" para texto general)
+# Puedes cambiarlo a "gemini-1.5-pro-latest" o "gemini-1.0-pro" si lo prefieres
+GEMINI_MODEL = "gemini-1.5-flash"
 def get_response_queues():
     return response_queues, response_queues_lock
 
@@ -119,6 +131,80 @@ def enviar_y_esperar_respuesta(receptor, contenido, respuesta_key, timeout=60):
             continue
     raise TimeoutError(f"No se recibió respuesta del agente '{receptor}' para clave '{respuesta_key}'")
 
+import unicodedata
+
+def normalizar(texto):
+    return ''.join(
+        c for c in unicodedata.normalize('NFD', texto)
+        if unicodedata.category(c) != 'Mn'
+    )
+
+def es_pregunta_valida_llm(pregunta: str) -> tuple[bool, list[str]]:
+    """
+    Valida si una pregunta es pertinente y procesable por el sistema multiagente
+    utilizando un LLM externo (Gemini).
+    Si no es válida, el LLM intenta sugerir preguntas similares.
+    Retorna: (es_valida: bool, recomendaciones: list[str])
+    """
+    try:
+        model = genai.GenerativeModel(GEMINI_MODEL)
+
+        # Prepara el prompt para el modelo.
+        # Le pedimos que responda con SI/NO y, si es NO, que dé 3 ejemplos.
+        prompt_para_gemini = (
+            "Dada la siguiente pregunta, ¿es relevante para un sistema de gestión de eventos, "
+            "planificación de ocio o búsqueda de actividades? "
+            "Responde 'SI' si es relevante o 'NO' si no lo es.\n"
+            "Si tu respuesta es 'NO', añade en una nueva línea 3 ejemplos de preguntas relevantes "
+            "para este sistema, separadas por ';'.\n\n"
+            f"Pregunta: \"{pregunta}\"\n"
+            "Respuesta:"
+        )
+
+        response = model.generate_content(
+            prompt_para_gemini,
+            safety_settings={
+                "HARASSMENT": "BLOCK_NONE",
+                "HATE": "BLOCK_NONE",
+                "SEXUAL": "BLOCK_NONE",
+                "DANGEROUS": "BLOCK_NONE",
+            },
+            request_options={"timeout": 60}
+        )
+
+        respuesta_llm_raw = response.text.strip().lower()
+        logger.info(f"LLM Gemini evaluó '{pregunta}' con raw: '{respuesta_llm_raw}'")
+
+        es_valida = "si" in respuesta_llm_raw or "sí" in respuesta_llm_raw
+        recomendaciones = []
+
+        if not es_valida:
+            # Si la respuesta no contiene 'si', buscamos recomendaciones
+            partes = respuesta_llm_raw.split('\n', 1) # Divide en max 2 partes por el primer salto de línea
+            if len(partes) > 1:
+                # La segunda parte debería contener las recomendaciones
+                # Eliminamos el prefijo 'ejemplos:' o similar si lo hay
+                reco_str = partes[1].strip()
+                # Elimina cualquier prefijo común que el LLM pueda añadir
+                reco_str = reco_str.replace("ejemplos:", "").replace("ejemplos de preguntas:", "").strip()
+                
+                # Divide por ';' y limpia cada recomendación
+                recomendaciones = [
+                    r.strip().capitalize() # Capitalizamos la primera letra de cada recomendación
+                    for r in reco_str.split(';') if r.strip()
+                ]
+                # Limitar a un máximo de 3 recomendaciones para mantener la concisión
+                recomendaciones = recomendaciones[:3]
+
+
+        return es_valida, recomendaciones
+
+    except Exception as e:
+        logger.error(f"Error al validar o generar recomendaciones con Gemini: {e}")
+        # En caso de error, asumimos que no es válida y no damos recomendaciones
+        return False, []
+
+
 @app.route("/status")
 @ensure_initialized
 def status():
@@ -156,14 +242,32 @@ def get_categorias():
             categorias.add(ev["classification"]["primary_category"])
     return jsonify(sorted(categorias))
 
-@app.route("/buscar", methods=["POST"])
 @ensure_initialized
+@app.route("/buscar", methods=["POST"])
 def buscar():
     try:
         data = request.json or {}
+        query_usuario = data.get("query", "").strip()
+
+        if not query_usuario:
+            return jsonify({"status": "error", "mensaje": "Consulta vacía"}), 400
+
+        # Validación con Gemini y obtención de recomendaciones
+        es_valida, recomendaciones = es_pregunta_valida_llm(query_usuario)
+
+        if not es_valida:
+            logger.info(f"❌ Consulta fuera de dominio: {query_usuario}")
+            mensaje_respuesta = " Esta consulta no está relacionada con eventos o actividades. Reformúlala por favor."
+            
+            return jsonify({
+                "status": "invalid",
+                "mensaje": mensaje_respuesta,
+                "eventos": [],
+                "sugerencias": recomendaciones # Añadimos las sugerencias al JSON de respuesta
+            }), 200
+
         clave_respuesta = data.get("respuesta") or f"res_busqueda_{uuid.uuid4().hex}"
-        
-        # Crear una cola específica para esta solicitud
+
         with response_queues_lock:
             response_queues[clave_respuesta] = queue.Queue()
             response_queue = response_queues[clave_respuesta]
@@ -178,8 +282,7 @@ def buscar():
         }
 
         logger.info(f"📨 [API] Enviando a busqueda_interactiva: {contenido}")
-        
-        # Enviar mensaje
+
         bandeja_busqueda = obtener_bandeja("busqueda_interactiva")
         if bandeja_busqueda:
             bandeja_busqueda.put(Mensaje(
@@ -191,11 +294,10 @@ def buscar():
             logger.error("❌ Bandeja de búsqueda no disponible")
             return jsonify({"status": "error", "mensaje": "Servicio no disponible"}), 503
 
-        # Esperar respuesta en la cola específica
         try:
-            respuesta = response_queue.get(timeout=60)  # 60 segundos timeout
+            respuesta = response_queue.get(timeout=60)
             eventos_limpios = limpiar_eventos(respuesta.get("data", []))
-            
+
             logger.info(f"✅ [API] Enviando {len(eventos_limpios)} eventos a frontend")
             return jsonify({
                 "status": "ok",
@@ -219,6 +321,8 @@ def buscar():
             "status": "error",
             "mensaje": "Error interno del servidor"
         }), 500
+
+
 def to_aware(iso_str):
     dt = datetime.fromisoformat(iso_str)
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
@@ -246,10 +350,11 @@ def generar_agenda_optima():
         clave_respuesta = "res_agenda_" + uuid.uuid4().hex
         with response_queues_lock:
             response_queues[clave_respuesta] = queue.Queue()
+            
         contenido = {
             "preferencias": preferencias,
-            "eventos_filtrados": eventos_entrada,
-            "respuesta": clave_respuesta
+            "respuesta": clave_respuesta,
+            "eventos_filtrados": eventos_entrada
         }
 
         bandeja = obtener_bandeja("optimizador")
